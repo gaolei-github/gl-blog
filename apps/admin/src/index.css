@@ -1,0 +1,35 @@
+:root {
+  font-family: 'Alegreya Sans', 'Noto Sans SC', 'PingFang SC',
+    'Microsoft Yahei', sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #2a2216;
+  background-color: #ffffff;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: #ffffff;
+}
+
+button,
+input,
+textarea {
+  font-family: inherit;
+}
+
+a {
+  color: inherit;
+}
