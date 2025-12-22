@@ -1,4 +1,4 @@
-:root {
+.app-html {
   font-family: 'Alegreya Sans', 'Noto Sans SC', 'PingFang SC',
     'Microsoft Yahei', sans-serif;
   line-height: 1.5;
@@ -11,25 +11,15 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
-*,
-*::before,
-*::after {
+.app-body *,
+.app-body *::before,
+.app-body *::after {
   box-sizing: border-box;
 }
 
-body {
+.app-body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
   background-color: #ffffff;
-}
-
-button,
-input,
-textarea {
-  font-family: inherit;
-}
-
-a {
-  color: inherit;
 }

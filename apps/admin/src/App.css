@@ -137,13 +137,13 @@
   animation-delay: 200ms;
 }
 
-.field label {
+.field-label {
   font-size: 12px;
   color: #6b552a;
   font-weight: 600;
 }
 
-.field input {
+.field-input {
   border-radius: 10px;
   border: 1px solid #ead8ac;
   padding: 12px 14px;
@@ -152,7 +152,7 @@
   background: #fffdf7;
 }
 
-.code-field input {
+.code-input {
   flex: 1;
 }
 
@@ -167,7 +167,7 @@
   padding: 10px 14px;
 }
 
-.field input:focus {
+.field-input:focus {
   outline: none;
   border-color: #e0ad3e;
   box-shadow: 0 0 0 4px rgba(224, 173, 62, 0.2);
@@ -226,7 +226,7 @@
   align-items: center;
 }
 
-.checkbox input {
+.checkbox-input {
   width: 16px;
   height: 16px;
 }

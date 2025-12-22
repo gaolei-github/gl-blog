@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import './App.css'
+import './app.css'
 
 type Mode = 'login' | 'register'
 
@@ -67,8 +67,11 @@ function App() {
               onSubmit={(event) => event.preventDefault()}
             >
               <div className="field">
-                <label htmlFor="email">邮箱</label>
+                <label className="field-label" htmlFor="email">
+                  邮箱
+                </label>
                 <input
+                  className="field-input"
                   id="email"
                   name="email"
                   type="email"
@@ -80,9 +83,12 @@ function App() {
 
               {!isLogin && (
                 <div className="field code-field">
-                  <label htmlFor="code">邮箱验证码</label>
+                  <label className="field-label" htmlFor="code">
+                    邮箱验证码
+                  </label>
                   <div className="code-row">
                     <input
+                      className="field-input code-input"
                       id="code"
                       name="code"
                       type="text"
@@ -101,8 +107,11 @@ function App() {
               )}
 
               <div className="field">
-                <label htmlFor="password">密码</label>
+                <label className="field-label" htmlFor="password">
+                  密码
+                </label>
                 <input
+                  className="field-input"
                   id="password"
                   name="password"
                   type="password"
@@ -133,8 +142,11 @@ function App() {
 
               {!isLogin && (
                 <div className="field">
-                  <label htmlFor="confirm">确认密码</label>
+                  <label className="field-label" htmlFor="confirm">
+                    确认密码
+                  </label>
                   <input
+                    className="field-input"
                     id="confirm"
                     name="confirm"
                     type="password"
@@ -149,7 +161,11 @@ function App() {
                 {isLogin ? (
                   <>
                     <label className="checkbox">
-                      <input type="checkbox" name="remember" />
+                      <input
+                        className="checkbox-input"
+                        type="checkbox"
+                        name="remember"
+                      />
                       记住我
                     </label>
                     <button type="button" className="link">
@@ -158,7 +174,12 @@ function App() {
                   </>
                 ) : (
                   <label className="checkbox">
-                    <input type="checkbox" name="terms" required />
+                    <input
+                      className="checkbox-input"
+                      type="checkbox"
+                      name="terms"
+                      required
+                    />
                     我已阅读并同意《服务协议》与《隐私政策》
                   </label>
                 )}
