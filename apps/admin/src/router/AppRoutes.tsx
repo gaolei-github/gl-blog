@@ -2,6 +2,7 @@ import type { ReactElement } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import HomePage from '../pages/home/HomePage'
 import LoginPage from '../pages/login/LoginPage'
+import CreatePostPage from '../pages/posts/CreatePostPage'
 import PostsPage from '../pages/posts/PostsPage'
 import TagsPage from '../pages/tags/TagsPage'
 import { hasAuthToken } from '../utils/auth'
@@ -48,6 +49,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <PostsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/posts/create"
+        element={
+          <RequireAuth>
+            <CreatePostPage />
           </RequireAuth>
         }
       />
