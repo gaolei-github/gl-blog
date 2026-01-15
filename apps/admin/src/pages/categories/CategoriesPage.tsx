@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import ConfirmDialog from '../../components/confirm-dialog/ConfirmDialog'
+import { DataCard, DataCardGrid } from '../../components/data-card-grid/DataCardGrid'
 import DetailModal from '../../components/detail-modal/DetailModal'
 import DashboardLayout from '../../components/dashboard-layout/DashboardLayout'
 import './categories-page.css'
@@ -665,46 +666,30 @@ function CategoriesPage() {
           </div>
         </div>
 
-        <div className="categories-grid">
-          {filteredCategories.length === 0 ? (
-            <div className="categories-empty">暂无匹配分类</div>
-          ) : (
-            paginatedCategories.map((category) => (
-              <button
-                key={category.id}
-                className={`categories-item ${
-                  selectedCategoryId === category.id ? 'selected' : ''
-                }`}
-                type="button"
-                aria-pressed={selectedCategoryId === category.id}
-                onClick={() => handleSelectCategory(category.id)}
-              >
-                <div className="categories-item-header">
-                  <div>
-                    <div className="categories-item-name">
-                      {category.name}
-                    </div>
-                    <div className="categories-item-description">
-                      {category.description}
-                    </div>
-                  </div>
-                  <span
-                    className={`categories-status ${category.status}`}
-                  >
-                    {statusLabels[category.status]}
-                  </span>
-                </div>
-                <div className="categories-item-meta">
+        <DataCardGrid
+          isEmpty={filteredCategories.length === 0}
+          emptyMessage="暂无匹配分类"
+        >
+          {paginatedCategories.map((category) => (
+            <DataCard
+              key={category.id}
+              title={category.name}
+              description={category.description}
+              statusLabel={statusLabels[category.status]}
+              statusTone={category.status}
+              meta={
+                <>
                   <span>文章 {category.postCount}</span>
                   <span>更新 {category.updatedAt}</span>
-                  <span className="categories-item-slug">
-                    {category.slug}
-                  </span>
-                </div>
-              </button>
-            ))
-          )}
-        </div>
+                  <span className="data-card-chip">{category.slug}</span>
+                </>
+              }
+              onClick={() => handleSelectCategory(category.id)}
+              isSelected={selectedCategoryId === category.id}
+              ariaPressed={selectedCategoryId === category.id}
+            />
+          ))}
+        </DataCardGrid>
         <div className="categories-pagination">
           <div className="pagination-info">
             第 {currentPage} / {totalPages} 页 · 共{' '}

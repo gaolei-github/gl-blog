@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import DashboardLayout from '../../components/dashboard-layout/DashboardLayout'
 import ConfirmDialog from '../../components/confirm-dialog/ConfirmDialog'
+import { DataCard, DataCardGrid } from '../../components/data-card-grid/DataCardGrid'
+import DashboardLayout from '../../components/dashboard-layout/DashboardLayout'
 import DetailModal from '../../components/detail-modal/DetailModal'
 import './tags-page.css'
 
@@ -11,6 +12,8 @@ interface TagItem {
   status: 'enabled' | 'disabled'
   slug: string
 }
+
+type TagAction = 'view' | 'edit' | 'delete' | null
 
 const tagList: TagItem[] = [
   {
@@ -64,6 +67,17 @@ const tagList: TagItem[] = [
   },
 ]
 
+const statusLabels: Record<TagItem['status'], string> = {
+  enabled: '启用',
+  disabled: '禁用',
+}
+
+const actionLabels: Record<Exclude<TagAction, null>, string> = {
+  view: '查看',
+  edit: '编辑',
+  delete: '删除',
+}
+
 function TagsPage() {
   const [pendingName, setPendingName] = useState('')
   const [searchName, setSearchName] = useState('')
@@ -77,6 +91,8 @@ function TagsPage() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
   const [activeTag, setActiveTag] = useState<TagItem | null>(null)
   const [pendingDeleteTag, setPendingDeleteTag] = useState<TagItem | null>(null)
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
+  const [pendingAction, setPendingAction] = useState<TagAction>(null)
   const [draftName, setDraftName] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
   const [draftKey, setDraftKey] = useState('')
@@ -114,6 +130,30 @@ function TagsPage() {
     return filteredTags.slice(startIndex, endIndex)
   }, [currentPage, filteredTags, pageSize])
 
+  const selectedTag = useMemo(() => {
+    if (!selectedTagId) {
+      return null
+    }
+
+    return tags.find((tag) => tag.id === selectedTagId) ?? null
+  }, [selectedTagId, tags])
+
+  const selectionMessage = useMemo(() => {
+    if (selectedTag && pendingAction) {
+      return `已选：${selectedTag.name} · ${actionLabels[pendingAction]}`
+    }
+
+    if (selectedTag) {
+      return `已选：${selectedTag.name}`
+    }
+
+    if (pendingAction) {
+      return `请点击卡片以${actionLabels[pendingAction]}`
+    }
+
+    return '选择标签后操作'
+  }, [pendingAction, selectedTag])
+
   useEffect(() => {
     if (currentPage > totalPages) {
       setCurrentPage(totalPages)
@@ -123,6 +163,15 @@ function TagsPage() {
   useEffect(() => {
     setPendingPage(String(currentPage))
   }, [currentPage])
+
+  useEffect(() => {
+    if (
+      selectedTagId &&
+      !paginatedTags.some((tag) => tag.id === selectedTagId)
+    ) {
+      setSelectedTagId(null)
+    }
+  }, [paginatedTags, selectedTagId])
 
   const handlePageSizeChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const nextSize = Number(event.target.value)
@@ -155,9 +204,71 @@ function TagsPage() {
     )
   }
 
+  const handleSelectTag = (tagId: string) => {
+    const nextSelectedId = selectedTagId === tagId ? null : tagId
+
+    setSelectedTagId(nextSelectedId)
+
+    if (!nextSelectedId) {
+      return
+    }
+
+    const nextTag = tags.find((tag) => tag.id === nextSelectedId)
+
+    if (!nextTag) {
+      return
+    }
+
+    if (pendingAction === 'view') {
+      handleOpenDetail(nextTag)
+      setPendingAction(null)
+    }
+
+    if (pendingAction === 'edit') {
+      handleOpenEdit(nextTag)
+      setPendingAction(null)
+    }
+  }
+
   const handleOpenDelete = (tag: TagItem) => {
     setPendingDeleteTag(tag)
     setIsDeleteOpen(true)
+  }
+
+  const handleOpenView = () => {
+    if (!selectedTag) {
+      setPendingAction((current) =>
+        current === 'view' ? null : 'view'
+      )
+      return
+    }
+
+    handleOpenDetail(selectedTag)
+    setPendingAction(null)
+  }
+
+  const handleOpenEditAction = () => {
+    if (!selectedTag) {
+      setPendingAction((current) =>
+        current === 'edit' ? null : 'edit'
+      )
+      return
+    }
+
+    handleOpenEdit(selectedTag)
+    setPendingAction(null)
+  }
+
+  const handleOpenDeleteAction = () => {
+    if (!selectedTag) {
+      setPendingAction((current) =>
+        current === 'delete' ? null : 'delete'
+      )
+      return
+    }
+
+    handleOpenDelete(selectedTag)
+    setPendingAction(null)
   }
 
   const handleCloseDelete = () => {
@@ -173,6 +284,7 @@ function TagsPage() {
     setTags((current) =>
       current.filter((tag) => tag.id !== pendingDeleteTag.id)
     )
+    setSelectedTagId(null)
     handleCloseDelete()
   }
 
@@ -322,63 +434,73 @@ function TagsPage() {
             新增标签
           </button>
         </div>
-        <div className="tags-table">
-          <div className="tags-row tags-head">
-            <span>标签名称</span>
-            <span>标签描述</span>
-            <span>是否启用</span>
-            <span>操作</span>
+        <div className="tags-selection">
+          <div className="tags-selection-info">{selectionMessage}</div>
+          <div className="tags-selection-actions">
+            <button
+              type="button"
+              className={`tags-action-button ${
+                pendingAction === 'view' ? 'active' : ''
+              }`}
+              onClick={handleOpenView}
+            >
+              查看
+            </button>
+            <button
+              type="button"
+              className={`tags-action-button ${
+                pendingAction === 'edit' ? 'active' : ''
+              }`}
+              onClick={handleOpenEditAction}
+            >
+              编辑
+            </button>
+            <button
+              type="button"
+              className={`tags-action-button danger ${
+                pendingAction === 'delete' ? 'active' : ''
+              }`}
+              onClick={handleOpenDeleteAction}
+            >
+              删除
+            </button>
           </div>
-          {paginatedTags.length === 0 ? (
-            <div className="tags-empty">暂无匹配标签</div>
-          ) : (
-            paginatedTags.map((tag) => (
-              <div className="tags-row" key={tag.id}>
-                <span className="tag-name">{tag.name}</span>
-                <span className="tag-description">{tag.description}</span>
-                <span>
-                  <span
-                    className={`tag-status ${
-                      tag.status === 'enabled' ? 'enabled' : 'disabled'
-                    }`}
-                  >
-                    {tag.status === 'enabled' ? '启用' : '禁用'}
-                  </span>
-                </span>
-                <span className="tag-actions">
-                  <button
-                    type="button"
-                    className="tag-action-button"
-                    onClick={() => handleOpenDetail(tag)}
-                  >
-                    查看
-                  </button>
-                  <button
-                    type="button"
-                    className="tag-action-button"
-                    onClick={() => handleOpenEdit(tag)}
-                  >
-                    编辑
-                  </button>
-                  <button
-                    type="button"
-                    className="tag-action-button danger"
-                    onClick={() => handleOpenDelete(tag)}
-                  >
-                    删除
-                  </button>
-                  <button
-                    type="button"
-                    className="tag-action-button"
-                    onClick={() => handleToggleStatus(tag.id)}
-                  >
-                    {tag.status === 'enabled' ? '禁用' : '启用'}
-                  </button>
-                </span>
-              </div>
-            ))
-          )}
         </div>
+        <DataCardGrid
+          isEmpty={filteredTags.length === 0}
+          emptyMessage="暂无匹配标签"
+        >
+          {paginatedTags.map((tag) => (
+            <DataCard
+              key={tag.id}
+              title={tag.name}
+              description={tag.description}
+              statusLabel={statusLabels[tag.status]}
+              statusTone={tag.status}
+              meta={
+                <span className="data-card-chip">
+                  {tag.slug || tag.id}
+                </span>
+              }
+              actions={
+                <button
+                  type="button"
+                  className="data-card-action"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    handleToggleStatus(tag.id)
+                  }}
+                >
+                  {tag.status === 'enabled' ? '禁用' : '启用'}
+                </button>
+              }
+              onClick={() => handleSelectTag(tag.id)}
+              isSelected={selectedTagId === tag.id}
+              ariaPressed={selectedTagId === tag.id}
+              useButton={false}
+            />
+          ))}
+        </DataCardGrid>
         <div className="tags-pagination">
           <div className="pagination-info">
             第 {currentPage} / {totalPages} 页 · 共 {filteredTags.length} 条
