@@ -5,6 +5,7 @@ import LoginPage from '../pages/login/LoginPage'
 import CreatePostPage from '../pages/posts/CreatePostPage'
 import PostsPage from '../pages/posts/PostsPage'
 import TagsPage from '../pages/tags/TagsPage'
+import CategoriesPage from '../pages/categories/CategoriesPage'
 import { hasAuthToken } from '../utils/auth'
 
 type RequireAuthProps = {
@@ -65,6 +66,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <TagsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/categories"
+        element={
+          <RequireAuth>
+            <CategoriesPage />
           </RequireAuth>
         }
       />

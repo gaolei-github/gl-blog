@@ -21,6 +21,12 @@ const menuItems = [
     path: '/posts',
   },
   {
+    key: 'categories',
+    label: '分类管理',
+    description: '维护栏目层级与归档',
+    path: '/categories',
+  },
+  {
     key: 'tags',
     label: '标签管理',
     description: '整理标签与分类关系',
