@@ -101,7 +101,11 @@ const formatDate = (date: Date) => {
 
 function CategoriesPage() {
   const [categories, setCategories] = useState<CategoryItem[]>(categoryList)
-  const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const [isFormOpen, setIsFormOpen] = useState(false)
+  const [isEditMode, setIsEditMode] = useState(false)
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(
+    null
+  )
   const [draftName, setDraftName] = useState('')
   const [draftSlug, setDraftSlug] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
@@ -268,15 +272,20 @@ function CategoriesPage() {
   }
 
   const handleSelectCategory = (categoryId: string) => {
-    setSelectedCategoryId((current) =>
-      current === categoryId ? null : categoryId
-    )
-  }
+    const nextSelectedId =
+      selectedCategoryId === categoryId ? null : categoryId
 
-  const handleActionToggle = (nextAction: Exclude<CategoryAction, null>) => {
-    setPendingAction((current) =>
-      current === nextAction ? null : nextAction
-    )
+    setSelectedCategoryId(nextSelectedId)
+
+    if (nextSelectedId && pendingAction === 'edit') {
+      const nextCategory = categories.find(
+        (category) => category.id === nextSelectedId
+      )
+
+      if (nextCategory) {
+        openEditModal(nextCategory)
+      }
+    }
   }
 
   const handleOpenDelete = () => {
@@ -318,9 +327,43 @@ function CategoriesPage() {
     setDraftStatus('enabled')
   }
 
-  const handleCloseCreate = () => {
-    setIsCreateOpen(false)
+  const handleCloseForm = () => {
+    setIsFormOpen(false)
+    setIsEditMode(false)
+    setEditingCategoryId(null)
     resetDraft()
+  }
+
+  const handleOpenCreate = () => {
+    resetDraft()
+    setEditingCategoryId(null)
+    setIsEditMode(false)
+    setIsFormOpen(true)
+    setPendingAction(null)
+  }
+
+  const openEditModal = (category: CategoryItem) => {
+    setDraftName(category.name)
+    setDraftSlug(category.slug)
+    setDraftDescription(category.description)
+    setDraftLevel(category.level ?? '1')
+    setDraftParentId(category.parentId ?? 'none')
+    setDraftStatus(category.status)
+    setEditingCategoryId(category.id)
+    setIsEditMode(true)
+    setIsFormOpen(true)
+    setPendingAction(null)
+  }
+
+  const handleOpenEdit = () => {
+    if (!activeCategory) {
+      setPendingAction((current) =>
+        current === 'edit' ? null : 'edit'
+      )
+      return
+    }
+
+    openEditModal(activeCategory)
   }
 
   const handleCreateCategory = () => {
@@ -357,7 +400,44 @@ function CategoriesPage() {
       ]
     })
 
-    handleCloseCreate()
+    handleCloseForm()
+  }
+
+  const handleUpdateCategory = () => {
+    if (!editingCategoryId) {
+      return
+    }
+
+    const nextName = draftName.trim()
+    const nextSlug = draftSlug.trim()
+    const nextDescription = draftDescription.trim()
+    const nextParentId =
+      draftLevel === '1' || draftParentId === 'none'
+        ? null
+        : draftParentId
+
+    if (!nextName) {
+      return
+    }
+
+    setCategories((current) =>
+      current.map((category) =>
+        category.id === editingCategoryId
+          ? {
+              ...category,
+              name: nextName,
+              description: nextDescription || '待补充分类说明',
+              status: draftStatus,
+              slug: nextSlug || category.slug || category.id,
+              level: draftLevel,
+              parentId: nextParentId,
+              updatedAt: formatDate(new Date()),
+            }
+          : category
+      )
+    )
+
+    handleCloseForm()
   }
 
   return (
@@ -377,7 +457,7 @@ function CategoriesPage() {
             <button
               type="button"
               className="category-create-button"
-              onClick={() => setIsCreateOpen(true)}
+              onClick={handleOpenCreate}
             >
               新增分类
             </button>
@@ -385,11 +465,13 @@ function CategoriesPage() {
         </header>
 
         <DetailModal
-          isOpen={isCreateOpen}
-          title="新增分类"
+          isOpen={isFormOpen}
+          title={isEditMode ? '编辑分类' : '新增分类'}
           mode="edit"
-          onClose={handleCloseCreate}
-          onSave={handleCreateCategory}
+          onClose={handleCloseForm}
+          onSave={
+            isEditMode ? handleUpdateCategory : handleCreateCategory
+          }
           saveLabel="保存"
           cancelLabel="取消"
         >
@@ -567,7 +649,7 @@ function CategoriesPage() {
               className={`categories-action-button ${
                 pendingAction === 'edit' ? 'active' : ''
               }`}
-              onClick={() => handleActionToggle('edit')}
+              onClick={handleOpenEdit}
             >
               编辑
             </button>
