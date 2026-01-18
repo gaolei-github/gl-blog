@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  createTag,
+  deleteTag,
+  fetchTagPage,
+  updateTag,
+  updateTagEnabled,
+} from '../../api/tags'
 import ConfirmDialog from '../../components/confirm-dialog/ConfirmDialog'
 import { DataCard, DataCardGrid } from '../../components/data-card-grid/DataCardGrid'
 import DashboardLayout from '../../components/dashboard-layout/DashboardLayout'
 import DetailModal from '../../components/detail-modal/DetailModal'
+import ToastNotice from '../../components/toast-notice/ToastNotice'
 import './tags-page.css'
 
 interface TagItem {
@@ -15,58 +23,6 @@ interface TagItem {
 
 type TagAction = 'view' | 'edit' | 'delete' | null
 
-const tagList: TagItem[] = [
-  {
-    id: 'tag-001',
-    name: '增长',
-    description: '增长策略与实验复盘的核心标签',
-    status: 'enabled',
-    slug: 'growth',
-  },
-  {
-    id: 'tag-002',
-    name: '设计系统',
-    description: '组件库、视觉规范与设计系统规划',
-    status: 'enabled',
-    slug: 'design-system',
-  },
-  {
-    id: 'tag-003',
-    name: '内容运营',
-    description: '选题、排期与内容增长运营方法',
-    status: 'enabled',
-    slug: 'content-ops',
-  },
-  {
-    id: 'tag-004',
-    name: '协作流程',
-    description: '跨团队协作与流程优化的经验沉淀',
-    status: 'disabled',
-    slug: 'collaboration',
-  },
-  {
-    id: 'tag-005',
-    name: '数据分析',
-    description: '看板搭建、指标拆解与洞察挖掘',
-    status: 'enabled',
-    slug: 'data-insights',
-  },
-  {
-    id: 'tag-006',
-    name: '品牌表达',
-    description: '品牌调性与写作风格统一',
-    status: 'disabled',
-    slug: 'brand-voice',
-  },
-  {
-    id: 'tag-007',
-    name: '效率工具',
-    description: '内容生产与交付效率工具',
-    status: 'enabled',
-    slug: 'productivity-tools',
-  },
-]
-
 const statusLabels: Record<TagItem['status'], string> = {
   enabled: '启用',
   disabled: '禁用',
@@ -78,10 +34,18 @@ const actionLabels: Record<Exclude<TagAction, null>, string> = {
   delete: '删除',
 }
 
+type TagPageResponse = Awaited<ReturnType<typeof fetchTagPage>>
+
+const pendingTagPageRequests = new Map<
+  string,
+  Promise<TagPageResponse>
+>()
+
 function TagsPage() {
   const [pendingName, setPendingName] = useState('')
   const [searchName, setSearchName] = useState('')
-  const [tags, setTags] = useState<TagItem[]>(tagList)
+  const [tags, setTags] = useState<TagItem[]>([])
+  const [totalCount, setTotalCount] = useState(0)
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [pendingPage, setPendingPage] = useState('1')
@@ -89,14 +53,78 @@ function TagsPage() {
   const [isDetailOpen, setIsDetailOpen] = useState(false)
   const [isEditMode, setIsEditMode] = useState(false)
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
+  const [isToggleOpen, setIsToggleOpen] = useState(false)
+  const [isSuccessOpen, setIsSuccessOpen] = useState(false)
+  const [isErrorOpen, setIsErrorOpen] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+  const [errorMessage, setErrorMessage] = useState('')
   const [activeTag, setActiveTag] = useState<TagItem | null>(null)
   const [pendingDeleteTag, setPendingDeleteTag] = useState<TagItem | null>(null)
+  const [pendingToggleTag, setPendingToggleTag] = useState<TagItem | null>(null)
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<TagAction>(null)
   const [draftName, setDraftName] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
   const [draftKey, setDraftKey] = useState('')
   const [draftStatus, setDraftStatus] = useState<TagItem['status']>('enabled')
+  const [isCreating, setIsCreating] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
+
+  const fetchTags = useCallback(
+    async (pageNo: number, size: number, keyword: string) => {
+      try {
+        const normalizedKeyword = keyword.trim()
+        const requestKey = `${pageNo}:${size}:${normalizedKeyword}`
+        const cachedRequest = pendingTagPageRequests.get(requestKey)
+        const requestPromise =
+          cachedRequest ??
+          fetchTagPage({
+            keyword: normalizedKeyword,
+            pageNo,
+            pageSize: size,
+          }).finally(() => {
+            pendingTagPageRequests.delete(requestKey)
+          })
+
+        if (!cachedRequest) {
+          pendingTagPageRequests.set(requestKey, requestPromise)
+        }
+
+        const response = await requestPromise
+
+        if (!response.success) {
+          setErrorMessage(response.errorMessage || '请求失败')
+          setIsErrorOpen(true)
+          return
+        }
+
+        const records = response.data?.records ?? []
+        const responseTotal = response.data?.total ?? 0
+        const nextTags = records.map((record) => {
+          const nextId = String(record.id)
+          const nextSlug = record.slug || record.tagCode || nextId
+
+          return {
+            id: nextId,
+            name: record.name,
+            description: record.description,
+            status: record.enabled === 1 ? 'enabled' : 'disabled',
+            slug: nextSlug,
+          }
+        })
+
+        setTags(nextTags)
+        setTotalCount(
+          responseTotal > 0 ? responseTotal : records.length
+        )
+      } catch {
+        return
+      }
+    },
+    []
+  )
 
   const handleSearch = () => {
     setSearchName(pendingName)
@@ -109,26 +137,9 @@ function TagsPage() {
     setCurrentPage(1)
   }
 
-  const filteredTags = useMemo(() => {
-    const normalizedName = searchName.trim().toLowerCase()
-
-    return tags.filter((tag) =>
-      normalizedName
-        ? tag.name.toLowerCase().includes(normalizedName)
-        : true
-    )
-  }, [searchName, tags])
-
   const totalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(filteredTags.length / pageSize))
-  }, [filteredTags.length, pageSize])
-
-  const paginatedTags = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize
-    const endIndex = startIndex + pageSize
-
-    return filteredTags.slice(startIndex, endIndex)
-  }, [currentPage, filteredTags, pageSize])
+    return Math.max(1, Math.ceil(totalCount / pageSize))
+  }, [pageSize, totalCount])
 
   const selectedTag = useMemo(() => {
     if (!selectedTagId) {
@@ -160,6 +171,11 @@ function TagsPage() {
     }
   }, [currentPage, totalPages])
 
+
+  useEffect(() => {
+    void fetchTags(currentPage, pageSize, searchName)
+  }, [currentPage, fetchTags, pageSize, searchName])
+
   useEffect(() => {
     setPendingPage(String(currentPage))
   }, [currentPage])
@@ -167,11 +183,11 @@ function TagsPage() {
   useEffect(() => {
     if (
       selectedTagId &&
-      !paginatedTags.some((tag) => tag.id === selectedTagId)
+      !tags.some((tag) => tag.id === selectedTagId)
     ) {
       setSelectedTagId(null)
     }
-  }, [paginatedTags, selectedTagId])
+  }, [selectedTagId, tags])
 
   const handlePageSizeChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const nextSize = Number(event.target.value)
@@ -191,17 +207,37 @@ function TagsPage() {
     setCurrentPage(clampedPage)
   }
 
-  const handleToggleStatus = (tagId: string) => {
-    setTags((current) =>
-      current.map((tag) =>
-        tag.id === tagId
-          ? {
-              ...tag,
-              status: tag.status === 'enabled' ? 'disabled' : 'enabled',
-            }
-          : tag
+  const handleToggleStatus = async (tag: TagItem) => {
+    if (togglingId === tag.id) {
+      return
+    }
+
+    const nextEnable = tag.status === 'enabled' ? 0 : 1
+
+    try {
+      setTogglingId(tag.id)
+      const response = await updateTagEnabled(tag.id, {
+        enable: nextEnable,
+      })
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '操作失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      await fetchTags(currentPage, pageSize, searchName)
+      setSelectedTagId(null)
+      setSuccessMessage(
+        nextEnable === 1 ? '标签已启用' : '标签已禁用'
       )
-    )
+      setIsSuccessOpen(true)
+    } catch {
+      setErrorMessage('操作失败')
+      setIsErrorOpen(true)
+    } finally {
+      setTogglingId(null)
+    }
   }
 
   const handleSelectTag = (tagId: string) => {
@@ -271,21 +307,57 @@ function TagsPage() {
     setPendingAction(null)
   }
 
+  const handleOpenToggle = () => {
+    if (!selectedTag) {
+      return
+    }
+
+    setPendingToggleTag(selectedTag)
+    setIsToggleOpen(true)
+  }
+
+  const handleCloseToggle = () => {
+    setIsToggleOpen(false)
+    setPendingToggleTag(null)
+  }
+
+  const handleConfirmToggle = () => {
+    if (!pendingToggleTag || togglingId === pendingToggleTag.id) {
+      return
+    }
+
+    handleToggleStatus(pendingToggleTag)
+    handleCloseToggle()
+  }
+
   const handleCloseDelete = () => {
     setIsDeleteOpen(false)
     setPendingDeleteTag(null)
   }
 
-  const handleConfirmDelete = () => {
-    if (!pendingDeleteTag) {
+  const handleConfirmDelete = async () => {
+    if (!pendingDeleteTag || isDeleting) {
       return
     }
 
-    setTags((current) =>
-      current.filter((tag) => tag.id !== pendingDeleteTag.id)
-    )
-    setSelectedTagId(null)
-    handleCloseDelete()
+    try {
+      setIsDeleting(true)
+      const response = await deleteTag(pendingDeleteTag.id)
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '操作失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      handleCloseDelete()
+      setSelectedTagId(null)
+      await fetchTags(currentPage, pageSize, searchName)
+      setSuccessMessage('标签删除成功')
+      setIsSuccessOpen(true)
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   const handleOpenDetail = (tag: TagItem) => {
@@ -308,6 +380,7 @@ function TagsPage() {
     setIsDetailOpen(false)
     setIsEditMode(false)
     setActiveTag(null)
+    setSelectedTagId(null)
     resetDraft()
   }
 
@@ -323,35 +396,43 @@ function TagsPage() {
     resetDraft()
   }
 
-  const handleCreateTag = () => {
+  const handleCreateTag = async () => {
     const nextName = draftName.trim()
 
-    if (!nextName) {
+    if (!nextName || isCreating) {
       return
     }
 
     const nextDescription = draftDescription.trim()
     const nextKey = draftKey.trim()
-    const nextId = `tag-${Date.now()}`
+    const nextEnabled = draftStatus === 'enabled' ? 1 : 0
 
-    setTags((current) => [
-      {
-        id: nextId,
+    try {
+      setIsCreating(true)
+      const response = await createTag({
         name: nextName,
-        description: nextDescription,
-        status: draftStatus,
         slug: nextKey,
-      },
-      ...current,
-    ])
-    setPendingName('')
-    setSearchName('')
-    setCurrentPage(1)
-    handleCloseCreate()
+        description: nextDescription,
+        enabled: nextEnabled,
+      })
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '操作失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      handleCloseCreate()
+      await fetchTags(currentPage, pageSize, searchName)
+      setSuccessMessage('标签添加成功')
+      setIsSuccessOpen(true)
+    } finally {
+      setIsCreating(false)
+    }
   }
 
-  const handleSaveEdit = () => {
-    if (!activeTag) {
+  const handleSaveEdit = async () => {
+    if (!activeTag || isSaving) {
       return
     }
 
@@ -363,21 +444,30 @@ function TagsPage() {
 
     const nextDescription = draftDescription.trim()
     const nextKey = draftKey.trim()
+    const nextEnabled = draftStatus === 'enabled' ? 1 : 0
 
-    setTags((current) =>
-      current.map((tag) =>
-        tag.id === activeTag.id
-          ? {
-              ...tag,
-              name: nextName,
-              description: nextDescription,
-              slug: nextKey,
-              status: draftStatus,
-            }
-          : tag
-      )
-    )
-    handleCloseDetail()
+    try {
+      setIsSaving(true)
+      const response = await updateTag(activeTag.id, {
+        name: nextName,
+        slug: nextKey,
+        description: nextDescription,
+        enabled: nextEnabled,
+      })
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '操作失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      handleCloseDetail()
+      await fetchTags(currentPage, pageSize, searchName)
+      setSuccessMessage('标签更新成功')
+      setIsSuccessOpen(true)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   return (
@@ -464,35 +554,37 @@ function TagsPage() {
             >
               删除
             </button>
+            <button
+              type="button"
+              className="tags-action-button"
+              disabled={!selectedTag || togglingId === selectedTag?.id}
+              onClick={handleOpenToggle}
+            >
+              {togglingId === selectedTag?.id
+                ? '处理中'
+                : selectedTag?.status === 'enabled'
+                ? '禁用'
+                : '启用'}
+            </button>
           </div>
         </div>
         <DataCardGrid
-          isEmpty={filteredTags.length === 0}
+          isEmpty={tags.length === 0}
           emptyMessage="暂无匹配标签"
+          className="tags-grid"
         >
-          {paginatedTags.map((tag) => (
+          {tags.map((tag) => (
             <DataCard
               key={tag.id}
               title={tag.name}
               description={tag.description}
               statusLabel={statusLabels[tag.status]}
               statusTone={tag.status}
+              className="tags-card-item"
               meta={
                 <span className="data-card-chip">
                   {tag.slug || tag.id}
                 </span>
-              }
-              actions={
-                <button
-                  type="button"
-                  className="data-card-action"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    handleToggleStatus(tag.id)
-                  }}
-                >
-                  {tag.status === 'enabled' ? '禁用' : '启用'}
-                </button>
               }
               onClick={() => handleSelectTag(tag.id)}
               isSelected={selectedTagId === tag.id}
@@ -503,7 +595,7 @@ function TagsPage() {
         </DataCardGrid>
         <div className="tags-pagination">
           <div className="pagination-info">
-            第 {currentPage} / {totalPages} 页 · 共 {filteredTags.length} 条
+            第 {currentPage} / {totalPages} 页 · 共 {totalCount} 条
           </div>
           <div className="pagination-controls">
             <button
@@ -651,6 +743,7 @@ function TagsPage() {
                   type="button"
                   className="tags-modal-primary"
                   onClick={handleCreateTag}
+                  disabled={isCreating}
                 >
                   确认
                 </button>
@@ -774,6 +867,35 @@ function TagsPage() {
           confirmTone="danger"
           onConfirm={handleConfirmDelete}
           onCancel={handleCloseDelete}
+        />
+        <ConfirmDialog
+          isOpen={isToggleOpen && Boolean(pendingToggleTag)}
+          title="状态确认"
+          message={
+            pendingToggleTag?.status === 'enabled'
+              ? '确认禁用该标签？'
+              : '确认启用该标签？'
+          }
+          description={
+            pendingToggleTag ? `标签：${pendingToggleTag.name}` : undefined
+          }
+          confirmLabel={
+            pendingToggleTag?.status === 'enabled' ? '禁用' : '启用'
+          }
+          cancelLabel="取消"
+          onConfirm={handleConfirmToggle}
+          onCancel={handleCloseToggle}
+        />
+        <ToastNotice
+          isOpen={isSuccessOpen}
+          message={successMessage || '操作成功'}
+          onClose={() => setIsSuccessOpen(false)}
+        />
+        <ToastNotice
+          isOpen={isErrorOpen}
+          message={errorMessage || '系统异常'}
+          tone="error"
+          onClose={() => setIsErrorOpen(false)}
         />
       </section>
     </DashboardLayout>

@@ -9,7 +9,7 @@ import {
   REMEMBER_EMAIL_KEY,
   REFRESH_TOKEN_KEY,
 } from '../../constants/auth'
-import { hasAuthToken } from '../../utils/auth'
+import { hasAuthToken, saveAuthTokens } from '../../utils/auth'
 import {
   codeLogin,
   passwordLogin,
@@ -143,21 +143,12 @@ function LoginPage() {
     refreshToken: string
     expiresIn: number
   }) => {
-    const storage = rememberMe ? localStorage : sessionStorage
-    storage.setItem(ACCESS_TOKEN_KEY, tokens.accessToken)
-    storage.setItem(REFRESH_TOKEN_KEY, tokens.refreshToken)
-    storage.setItem(EXPIRES_IN_KEY, String(tokens.expiresIn))
+    saveAuthTokens(tokens, rememberMe)
 
     if (rememberMe) {
       localStorage.setItem(REMEMBER_EMAIL_KEY, email)
-      sessionStorage.removeItem(ACCESS_TOKEN_KEY)
-      sessionStorage.removeItem(REFRESH_TOKEN_KEY)
-      sessionStorage.removeItem(EXPIRES_IN_KEY)
     } else {
       localStorage.removeItem(REMEMBER_EMAIL_KEY)
-      localStorage.removeItem(ACCESS_TOKEN_KEY)
-      localStorage.removeItem(REFRESH_TOKEN_KEY)
-      localStorage.removeItem(EXPIRES_IN_KEY)
     }
   }
 
