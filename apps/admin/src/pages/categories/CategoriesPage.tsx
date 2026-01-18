@@ -1,8 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  createCategory,
+  deleteCategory,
+  fetchCategoryPage,
+  updateCategory,
+  updateCategoryEnabled,
+} from '../../api/categories'
 import ConfirmDialog from '../../components/confirm-dialog/ConfirmDialog'
 import { DataCard, DataCardGrid } from '../../components/data-card-grid/DataCardGrid'
 import DetailModal from '../../components/detail-modal/DetailModal'
 import DashboardLayout from '../../components/dashboard-layout/DashboardLayout'
+import ToastNotice from '../../components/toast-notice/ToastNotice'
 import './categories-page.css'
 
 type CategoryLevel = '1' | '2' | '3'
@@ -21,55 +29,7 @@ interface CategoryItem {
 
 type StatusFilter = 'all' | CategoryItem['status']
 
-type CategoryAction = 'edit' | 'delete' | null
-
-const categoryList: CategoryItem[] = [
-  {
-    id: 'category-001',
-    name: '产品策略',
-    description: '产品方向、定位与增长策略梳理',
-    status: 'enabled',
-    postCount: 18,
-    updatedAt: '2024-12-12',
-    slug: 'product-strategy',
-  },
-  {
-    id: 'category-002',
-    name: '体验设计',
-    description: '交互体验与视觉语言的系统化整理',
-    status: 'enabled',
-    postCount: 12,
-    updatedAt: '2024-12-08',
-    slug: 'experience-design',
-  },
-  {
-    id: 'category-003',
-    name: '内容运营',
-    description: '选题、排期与内容增长策略',
-    status: 'enabled',
-    postCount: 22,
-    updatedAt: '2024-11-30',
-    slug: 'content-ops',
-  },
-  {
-    id: 'category-004',
-    name: '团队协作',
-    description: '跨团队协作与流程沉淀',
-    status: 'disabled',
-    postCount: 6,
-    updatedAt: '2024-11-18',
-    slug: 'team-collaboration',
-  },
-  {
-    id: 'category-005',
-    name: '数据洞察',
-    description: '指标拆解、看板与增长洞察',
-    status: 'enabled',
-    postCount: 9,
-    updatedAt: '2024-11-05',
-    slug: 'data-insights',
-  },
-]
+type CategoryAction = 'view' | 'edit' | 'delete' | null
 
 const statusOptions = [
   { value: 'all', label: '全部' },
@@ -84,6 +44,7 @@ const levelOptions: Array<{ value: CategoryLevel; label: string }> = [
 ]
 
 const actionLabels: Record<Exclude<CategoryAction, null>, string> = {
+  view: '查看',
   edit: '编辑',
   delete: '删除',
 }
@@ -93,17 +54,15 @@ const statusLabels: Record<CategoryItem['status'], string> = {
   disabled: '停用',
 }
 
-const formatDate = (date: Date) => {
-  const year = date.getFullYear()
-  const month = String(date.getMonth() + 1).padStart(2, '0')
-  const day = String(date.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-}
+const DEFAULT_USER_ID = '10001'
 
 function CategoriesPage() {
-  const [categories, setCategories] = useState<CategoryItem[]>(categoryList)
+  const [categories, setCategories] = useState<CategoryItem[]>([])
+  const [totalCount, setTotalCount] = useState(0)
   const [isFormOpen, setIsFormOpen] = useState(false)
   const [isEditMode, setIsEditMode] = useState(false)
+  const [isViewOpen, setIsViewOpen] = useState(false)
+  const [viewCategory, setViewCategory] = useState<CategoryItem | null>(null)
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(
     null
   )
@@ -115,44 +74,40 @@ function CategoriesPage() {
   const [draftStatus, setDraftStatus] =
     useState<CategoryItem['status']>('enabled')
   const [query, setQuery] = useState('')
+  const [pendingQuery, setPendingQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [parentOptions, setParentOptions] = useState<
+    Array<{ value: string; label: string }>
+  >([])
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
     null
   )
   const [pendingAction, setPendingAction] = useState<CategoryAction>(null)
   const [isDeleteOpen, setIsDeleteOpen] = useState(false)
+  const [isToggleOpen, setIsToggleOpen] = useState(false)
   const [pendingDeleteCategory, setPendingDeleteCategory] =
+    useState<CategoryItem | null>(null)
+  const [pendingToggleCategory, setPendingToggleCategory] =
     useState<CategoryItem | null>(null)
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [pendingPage, setPendingPage] = useState('1')
   const [isStatusOpen, setIsStatusOpen] = useState(false)
   const statusSelectRef = useRef<HTMLDivElement | null>(null)
-
-  const filteredCategories = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase()
-
-    return categories.filter((category) => {
-      const matchesQuery = normalizedQuery
-        ? category.name.toLowerCase().includes(normalizedQuery)
-        : true
-      const matchesStatus =
-        statusFilter === 'all' ? true : category.status === statusFilter
-
-      return matchesQuery && matchesStatus
-    })
-  }, [categories, query, statusFilter])
+  const [isLevelOpen, setIsLevelOpen] = useState(false)
+  const [isParentOpen, setIsParentOpen] = useState(false)
+  const levelSelectRef = useRef<HTMLDivElement | null>(null)
+  const parentSelectRef = useRef<HTMLDivElement | null>(null)
+  const [isSuccessOpen, setIsSuccessOpen] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+  const [isErrorOpen, setIsErrorOpen] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
 
   const totalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(filteredCategories.length / pageSize))
-  }, [filteredCategories.length, pageSize])
-
-  const paginatedCategories = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize
-    const endIndex = startIndex + pageSize
-
-    return filteredCategories.slice(startIndex, endIndex)
-  }, [currentPage, filteredCategories, pageSize])
+    return Math.max(1, Math.ceil(totalCount / pageSize))
+  }, [pageSize, totalCount])
 
   const enabledCount = useMemo(() => {
     return categories.filter((category) => category.status === 'enabled')
@@ -177,12 +132,22 @@ function CategoriesPage() {
     return activeOption ? activeOption.label : '全部'
   }, [statusFilter])
 
-  const parentOptions = useMemo(() => {
-    return categories.map((category) => ({
-      value: category.id,
-      label: category.name,
-    }))
-  }, [categories])
+  const activeLevelLabel = useMemo(() => {
+    const activeOption = levelOptions.find(
+      (option) => option.value === draftLevel
+    )
+    return activeOption ? activeOption.label : '一级'
+  }, [draftLevel])
+
+  const activeParentLabel = useMemo(() => {
+    if (draftLevel === '1' || draftParentId === 'none') {
+      return '无'
+    }
+    const activeOption = parentOptions.find(
+      (option) => option.value === draftParentId
+    )
+    return activeOption ? activeOption.label : '无'
+  }, [draftLevel, draftParentId, parentOptions])
 
   const selectionMessage = useMemo(() => {
     if (activeCategory && pendingAction) {
@@ -200,17 +165,130 @@ function CategoriesPage() {
     return '选择分类后操作'
   }, [activeCategory, pendingAction])
 
+  const fetchCategories = useCallback(
+    async (
+      pageNo: number,
+      size: number,
+      keyword: string,
+      status: StatusFilter
+    ) => {
+      try {
+        const normalizedKeyword = keyword.trim()
+        const payload = {
+          keyword: normalizedKeyword,
+          pageNo,
+          pageSize: size,
+          status:
+            status === 'enabled' ? 1 : status === 'disabled' ? 0 : undefined,
+        }
+        const response = await fetchCategoryPage(payload)
+
+        if (!response.success) {
+          setErrorMessage(response.errorMessage || '请求失败')
+          setIsErrorOpen(true)
+          return
+        }
+
+        const records = response.data?.records ?? []
+        const responseTotal = Number(response.data?.total ?? 0)
+        const nextCategories = records.map((record) => {
+          const nextId = String(record.id)
+          const nextParentId =
+            record.parentId === 0 ? null : String(record.parentId)
+          const nextLevel = String(record.level) as CategoryLevel
+          const enabledValue = Number(record.enabled)
+
+          return {
+            id: nextId,
+            name: record.name,
+            description: record.description,
+            status: enabledValue === 1 ? 'enabled' : 'disabled',
+            postCount: record.postCount,
+            updatedAt: record.updateTime,
+            slug: record.slug || record.categoryCode || nextId,
+            level: nextLevel,
+            parentId: nextParentId,
+          }
+        })
+
+        setCategories(nextCategories)
+        setTotalCount(
+          responseTotal > 0 ? responseTotal : records.length
+        )
+      } catch {
+        setErrorMessage('请求失败')
+        setIsErrorOpen(true)
+      }
+    },
+    []
+  )
+
+  const fetchParentOptions = useCallback(async () => {
+    try {
+      const response = await fetchCategoryPage({
+        status: 1,
+        keyword: '',
+        level: 1,
+      })
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '请求失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      const records = response.data?.records ?? []
+      setParentOptions(
+        records.map((record) => ({
+          value: String(record.id),
+          label: record.name,
+        }))
+      )
+    } catch {
+      setErrorMessage('请求失败')
+      setIsErrorOpen(true)
+    }
+  }, [])
+
+  const handleSearch = () => {
+    setQuery(pendingQuery)
+    setCurrentPage(1)
+  }
+
+  const handleReset = () => {
+    setPendingQuery('')
+    setQuery('')
+    setStatusFilter('all')
+    setCurrentPage(1)
+    setIsStatusOpen(false)
+  }
+
   useEffect(() => {
-    if (!isStatusOpen) {
+    if (!isStatusOpen && !isLevelOpen && !isParentOpen) {
       return
     }
 
     const handleOutsideClick = (event: MouseEvent) => {
       if (
+        isStatusOpen &&
         statusSelectRef.current &&
         !statusSelectRef.current.contains(event.target as Node)
       ) {
         setIsStatusOpen(false)
+      }
+      if (
+        isLevelOpen &&
+        levelSelectRef.current &&
+        !levelSelectRef.current.contains(event.target as Node)
+      ) {
+        setIsLevelOpen(false)
+      }
+      if (
+        isParentOpen &&
+        parentSelectRef.current &&
+        !parentSelectRef.current.contains(event.target as Node)
+      ) {
+        setIsParentOpen(false)
       }
     }
 
@@ -219,22 +297,16 @@ function CategoriesPage() {
     return () => {
       document.removeEventListener('click', handleOutsideClick)
     }
-  }, [isStatusOpen])
-
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [query, statusFilter])
+  }, [isLevelOpen, isParentOpen, isStatusOpen])
 
   useEffect(() => {
     if (
       selectedCategoryId &&
-      !paginatedCategories.some(
-        (category) => category.id === selectedCategoryId
-      )
+      !categories.some((category) => category.id === selectedCategoryId)
     ) {
       setSelectedCategoryId(null)
     }
-  }, [paginatedCategories, selectedCategoryId])
+  }, [categories, selectedCategoryId])
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -243,14 +315,40 @@ function CategoriesPage() {
   }, [currentPage, totalPages])
 
   useEffect(() => {
+    void fetchCategories(currentPage, pageSize, query, statusFilter)
+  }, [currentPage, fetchCategories, pageSize, query, statusFilter])
+
+  useEffect(() => {
     setPendingPage(String(currentPage))
   }, [currentPage])
 
   useEffect(() => {
     if (draftLevel === '1') {
       setDraftParentId('none')
+      setIsParentOpen(false)
+      setParentOptions([])
+      return
     }
   }, [draftLevel])
+
+  useEffect(() => {
+    if (
+      !isFormOpen ||
+      draftLevel === '1' ||
+      !isParentOpen ||
+      parentOptions.length > 0
+    ) {
+      return
+    }
+
+    void fetchParentOptions()
+  }, [
+    draftLevel,
+    fetchParentOptions,
+    isFormOpen,
+    isParentOpen,
+    parentOptions.length,
+  ])
 
   const handlePageSizeChange = (
     event: React.ChangeEvent<HTMLSelectElement>
@@ -278,6 +376,17 @@ function CategoriesPage() {
 
     setSelectedCategoryId(nextSelectedId)
 
+    if (nextSelectedId && pendingAction === 'view') {
+      const nextCategory = categories.find(
+        (category) => category.id === nextSelectedId
+      )
+
+      if (nextCategory) {
+        openViewModal(nextCategory)
+      }
+      setPendingAction(null)
+    }
+
     if (nextSelectedId && pendingAction === 'edit') {
       const nextCategory = categories.find(
         (category) => category.id === nextSelectedId
@@ -286,7 +395,20 @@ function CategoriesPage() {
       if (nextCategory) {
         openEditModal(nextCategory)
       }
+      setPendingAction(null)
     }
+  }
+
+  const handleOpenView = () => {
+    if (!activeCategory) {
+      setPendingAction((current) =>
+        current === 'view' ? null : 'view'
+      )
+      return
+    }
+
+    openViewModal(activeCategory)
+    setPendingAction(null)
   }
 
   const handleOpenDelete = () => {
@@ -307,16 +429,75 @@ function CategoriesPage() {
     setPendingDeleteCategory(null)
   }
 
-  const handleConfirmDelete = () => {
-    if (!pendingDeleteCategory) {
+  const handleOpenToggle = () => {
+    if (!activeCategory) {
       return
     }
 
-    setCategories((current) =>
-      current.filter((category) => category.id !== pendingDeleteCategory.id)
-    )
-    setSelectedCategoryId(null)
-    handleCloseDelete()
+    setPendingToggleCategory(activeCategory)
+    setIsToggleOpen(true)
+  }
+
+  const handleCloseToggle = () => {
+    setIsToggleOpen(false)
+    setPendingToggleCategory(null)
+  }
+
+  const handleConfirmToggle = async () => {
+    if (!pendingToggleCategory || togglingId === pendingToggleCategory.id) {
+      return
+    }
+
+    const nextEnable = pendingToggleCategory.status === 'enabled' ? 0 : 1
+
+    try {
+      setTogglingId(pendingToggleCategory.id)
+      const response = await updateCategoryEnabled(
+        pendingToggleCategory.id,
+        { enable: nextEnable }
+      )
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '操作失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      handleCloseToggle()
+      setSelectedCategoryId(null)
+      await fetchCategories(currentPage, pageSize, query, statusFilter)
+      setSuccessMessage(
+        nextEnable === 1 ? '分类已启用' : '分类已禁用'
+      )
+      setIsSuccessOpen(true)
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDeleteCategory || isSubmitting) {
+      return
+    }
+
+    try {
+      setIsSubmitting(true)
+      const response = await deleteCategory(pendingDeleteCategory.id)
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '操作失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      handleCloseDelete()
+      setSelectedCategoryId(null)
+      await fetchCategories(currentPage, pageSize, query, statusFilter)
+      setSuccessMessage('分类删除成功')
+      setIsSuccessOpen(true)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   const resetDraft = () => {
@@ -332,6 +513,7 @@ function CategoriesPage() {
     setIsFormOpen(false)
     setIsEditMode(false)
     setEditingCategoryId(null)
+    setSelectedCategoryId(null)
     resetDraft()
   }
 
@@ -340,20 +522,42 @@ function CategoriesPage() {
     setEditingCategoryId(null)
     setIsEditMode(false)
     setIsFormOpen(true)
+    setIsViewOpen(false)
+    setViewCategory(null)
     setPendingAction(null)
   }
 
+  const openViewModal = (category: CategoryItem) => {
+    setIsFormOpen(false)
+    setIsEditMode(false)
+    setEditingCategoryId(null)
+    setViewCategory(category)
+    setIsViewOpen(true)
+  }
+
   const openEditModal = (category: CategoryItem) => {
+    setIsViewOpen(false)
+    setViewCategory(null)
     setDraftName(category.name)
     setDraftSlug(category.slug)
     setDraftDescription(category.description)
     setDraftLevel(category.level ?? '1')
-    setDraftParentId(category.parentId ?? 'none')
+    setDraftParentId(
+      category.parentId && category.parentId !== '0'
+        ? category.parentId
+        : 'none'
+    )
     setDraftStatus(category.status)
     setEditingCategoryId(category.id)
     setIsEditMode(true)
     setIsFormOpen(true)
     setPendingAction(null)
+  }
+
+  const handleCloseView = () => {
+    setIsViewOpen(false)
+    setViewCategory(null)
+    setSelectedCategoryId(null)
   }
 
   const handleOpenEdit = () => {
@@ -367,45 +571,49 @@ function CategoriesPage() {
     openEditModal(activeCategory)
   }
 
-  const handleCreateCategory = () => {
+  const handleCreateCategory = async () => {
     const nextName = draftName.trim()
     const nextSlug = draftSlug.trim()
     const nextDescription = draftDescription.trim()
     const nextParentId =
       draftLevel === '1' || draftParentId === 'none'
-        ? null
+        ? '0'
         : draftParentId
 
-    if (!nextName) {
+    if (!nextName || isSubmitting) {
       return
     }
 
-    setCategories((current) => {
-      const nextIndex = current.length + 1
-      const nextId = `category-${String(nextIndex).padStart(3, '0')}`
-      const nextDate = formatDate(new Date())
+    try {
+      setIsSubmitting(true)
+      const response = await createCategory({
+        name: nextName,
+        slug: nextSlug || nextName,
+        parentId: nextParentId,
+        level: Number(draftLevel),
+        sortNo: 0,
+        description: nextDescription,
+        enabled: draftStatus === 'enabled' ? 1 : 0,
+        userId: DEFAULT_USER_ID,
+      })
 
-      return [
-        {
-          id: nextId,
-          name: nextName,
-          description: nextDescription || '待补充分类说明',
-          status: draftStatus,
-          postCount: 0,
-          updatedAt: nextDate,
-          slug: nextSlug || nextId,
-          level: draftLevel,
-          parentId: nextParentId,
-        },
-        ...current,
-      ]
-    })
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '操作失败')
+        setIsErrorOpen(true)
+        return
+      }
 
-    handleCloseForm()
+      handleCloseForm()
+      await fetchCategories(currentPage, pageSize, query, statusFilter)
+      setSuccessMessage('分类添加成功')
+      setIsSuccessOpen(true)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
-  const handleUpdateCategory = () => {
-    if (!editingCategoryId) {
+  const handleUpdateCategory = async () => {
+    if (!editingCategoryId || isSubmitting) {
       return
     }
 
@@ -414,31 +622,40 @@ function CategoriesPage() {
     const nextDescription = draftDescription.trim()
     const nextParentId =
       draftLevel === '1' || draftParentId === 'none'
-        ? null
+        ? '0'
         : draftParentId
 
     if (!nextName) {
       return
     }
 
-    setCategories((current) =>
-      current.map((category) =>
-        category.id === editingCategoryId
-          ? {
-              ...category,
-              name: nextName,
-              description: nextDescription || '待补充分类说明',
-              status: draftStatus,
-              slug: nextSlug || category.slug || category.id,
-              level: draftLevel,
-              parentId: nextParentId,
-              updatedAt: formatDate(new Date()),
-            }
-          : category
-      )
-    )
+    try {
+      setIsSubmitting(true)
+      const response = await updateCategory(editingCategoryId, {
+        name: nextName,
+        slug: nextSlug || nextName,
+        parentId: nextParentId,
+        level: Number(draftLevel),
+        sortNo: 0,
+        description: nextDescription,
+        enabled: draftStatus === 'enabled' ? 1 : 0,
+        userId: DEFAULT_USER_ID,
+      })
 
-    handleCloseForm()
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '操作失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      handleCloseForm()
+      await fetchCategories(currentPage, pageSize, query, statusFilter)
+      setSelectedCategoryId(null)
+      setSuccessMessage('分类更新成功')
+      setIsSuccessOpen(true)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -522,40 +739,113 @@ function CategoriesPage() {
                 htmlFor="category-level-select"
               >
                 <span className="categories-modal-label">分类层级</span>
-                <select
-                  id="category-level-select"
-                  className="categories-modal-input"
-                  value={draftLevel}
-                  onChange={(event) =>
-                    setDraftLevel(event.target.value as CategoryLevel)
-                  }
+                <div
+                  className="categories-select categories-modal-select"
+                  ref={levelSelectRef}
                 >
-                  {levelOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  <button
+                    id="category-level-select"
+                    type="button"
+                    className="categories-select-trigger"
+                    onClick={() =>
+                      setIsLevelOpen((current) => !current)
+                    }
+                    aria-haspopup="listbox"
+                    aria-expanded={isLevelOpen}
+                  >
+                    <span>{activeLevelLabel}</span>
+                    <span className="categories-select-icon">▾</span>
+                  </button>
+                  {isLevelOpen ? (
+                    <div className="categories-select-menu" role="listbox">
+                      {levelOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="option"
+                          aria-selected={draftLevel === option.value}
+                          className={`categories-select-option ${
+                            draftLevel === option.value ? 'active' : ''
+                          }`}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            setDraftLevel(option.value)
+                            setIsLevelOpen(false)
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </label>
               <label
                 className="categories-modal-field"
                 htmlFor="category-parent-select"
               >
                 <span className="categories-modal-label">父类选项</span>
-                <select
-                  id="category-parent-select"
-                  className="categories-modal-input"
-                  value={draftParentId}
-                  onChange={(event) => setDraftParentId(event.target.value)}
-                  disabled={draftLevel === '1'}
+                <div
+                  className="categories-select categories-modal-select"
+                  ref={parentSelectRef}
                 >
-                  <option value="none">无</option>
-                  {parentOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                  <button
+                    id="category-parent-select"
+                    type="button"
+                    className="categories-select-trigger"
+                    onClick={() => {
+                      if (draftLevel !== '1') {
+                        setIsParentOpen((current) => !current)
+                      }
+                    }}
+                    aria-haspopup="listbox"
+                    aria-expanded={isParentOpen}
+                    disabled={draftLevel === '1'}
+                  >
+                    <span>{activeParentLabel}</span>
+                    <span className="categories-select-icon">▾</span>
+                  </button>
+                  {isParentOpen ? (
+                    <div className="categories-select-menu" role="listbox">
+                      <button
+                        type="button"
+                        role="option"
+                        aria-selected={draftParentId === 'none'}
+                        className={`categories-select-option ${
+                          draftParentId === 'none' ? 'active' : ''
+                        }`}
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          setDraftParentId('none')
+                          setIsParentOpen(false)
+                        }}
+                      >
+                        无
+                      </button>
+                      {parentOptions.map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="option"
+                          aria-selected={draftParentId === option.value}
+                          className={`categories-select-option ${
+                            draftParentId === option.value ? 'active' : ''
+                          }`}
+                          onClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            setDraftParentId(option.value)
+                            setIsParentOpen(false)
+                          }}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               </label>
             </div>
             <div className="categories-modal-field">
@@ -589,18 +879,90 @@ function CategoriesPage() {
             </div>
           </div>
         </DetailModal>
+        <DetailModal
+          isOpen={isViewOpen && Boolean(viewCategory)}
+          title="分类详情"
+          mode="view"
+          onClose={handleCloseView}
+        >
+          {viewCategory ? (
+            <div className="categories-modal-form">
+              <label className="categories-modal-field">
+                <span className="categories-modal-label">分类名称</span>
+                <div className="categories-detail-value">
+                  {viewCategory.name}
+                </div>
+              </label>
+              <label className="categories-modal-field">
+                <span className="categories-modal-label">分类标识</span>
+                <div className="categories-detail-value">
+                  {viewCategory.slug}
+                </div>
+              </label>
+              <label className="categories-modal-field">
+                <span className="categories-modal-label">分类描述</span>
+                <div className="categories-detail-value categories-detail-multiline">
+                  {viewCategory.description}
+                </div>
+              </label>
+              <div className="categories-modal-row">
+                <label className="categories-modal-field">
+                  <span className="categories-modal-label">分类层级</span>
+                  <div className="categories-detail-value">
+                    {viewCategory.level ?? '1'}
+                  </div>
+                </label>
+                <label className="categories-modal-field">
+                  <span className="categories-modal-label">父类选项</span>
+                  <div className="categories-detail-value">
+                    {viewCategory.parentId && viewCategory.parentId !== '0'
+                      ? viewCategory.parentId
+                      : '无'}
+                  </div>
+                </label>
+              </div>
+              <div className="categories-modal-row">
+                <label className="categories-modal-field">
+                  <span className="categories-modal-label">是否启用</span>
+                  <div className="categories-detail-value">
+                    {viewCategory.status === 'enabled' ? '启用' : '停用'}
+                  </div>
+                </label>
+                <label className="categories-modal-field">
+                  <span className="categories-modal-label">关联文章</span>
+                  <div className="categories-detail-value">
+                    {String(viewCategory.postCount)}
+                  </div>
+                </label>
+              </div>
+              <label className="categories-modal-field">
+                <span className="categories-modal-label">更新时间</span>
+                <div className="categories-detail-value">
+                  {viewCategory.updatedAt}
+                </div>
+              </label>
+            </div>
+          ) : null}
+        </DetailModal>
 
         <div className="categories-controls">
           <label className="categories-filter">
             <span className="categories-filter-label">关键词</span>
             <input
               className="categories-filter-input"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              value={pendingQuery}
+              onChange={(event) => {
+                setPendingQuery(event.target.value)
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  handleSearch()
+                }
+              }}
               placeholder="搜索分类名称"
             />
           </label>
-          <label className="categories-filter">
+          <div className="categories-filter">
             <span className="categories-filter-label">状态</span>
             <div className="categories-select" ref={statusSelectRef}>
               <button
@@ -626,8 +988,11 @@ function CategoriesPage() {
                       className={`categories-select-option ${
                         statusFilter === option.value ? 'active' : ''
                       }`}
-                      onClick={() => {
+                      onClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
                         setStatusFilter(option.value as StatusFilter)
+                        setCurrentPage(1)
                         setIsStatusOpen(false)
                       }}
                     >
@@ -637,40 +1002,78 @@ function CategoriesPage() {
                 </div>
               ) : null}
             </div>
-          </label>
+          </div>
+          <div className="categories-filter-actions">
+            <button
+              type="button"
+              className="categories-filter-button"
+              onClick={handleSearch}
+            >
+              查询
+            </button>
+            <button
+              type="button"
+              className="categories-filter-button ghost"
+              onClick={handleReset}
+            >
+              重置
+            </button>
+          </div>
         </div>
 
         <div className="categories-selection">
           <div className="categories-selection-info">
             {selectionMessage}
           </div>
-          <div className="categories-selection-actions">
-            <button
-              type="button"
-              className={`categories-action-button ${
-                pendingAction === 'edit' ? 'active' : ''
-              }`}
-              onClick={handleOpenEdit}
-            >
-              编辑
-            </button>
-            <button
-              type="button"
-              className={`categories-action-button danger ${
-                pendingAction === 'delete' ? 'active' : ''
-              }`}
-              onClick={handleOpenDelete}
-            >
-              删除
-            </button>
-          </div>
+        <div className="categories-selection-actions">
+          <button
+            type="button"
+            className={`categories-action-button ${
+              pendingAction === 'view' ? 'active' : ''
+            }`}
+            onClick={handleOpenView}
+          >
+            查看
+          </button>
+          <button
+            type="button"
+            className={`categories-action-button ${
+              pendingAction === 'edit' ? 'active' : ''
+            }`}
+            onClick={handleOpenEdit}
+          >
+            编辑
+          </button>
+          <button
+            type="button"
+            className={`categories-action-button danger ${
+              pendingAction === 'delete' ? 'active' : ''
+            }`}
+            onClick={handleOpenDelete}
+          >
+            删除
+          </button>
+          <button
+            type="button"
+            className="categories-action-button"
+            disabled={!activeCategory || togglingId === activeCategory?.id}
+            onClick={handleOpenToggle}
+          >
+            {togglingId === activeCategory?.id
+              ? '处理中'
+              : activeCategory?.status === 'enabled'
+              ? '禁用'
+              : '启用'}
+          </button>
+        </div>
         </div>
 
         <DataCardGrid
-          isEmpty={filteredCategories.length === 0}
+          isEmpty={categories.length === 0}
           emptyMessage="暂无匹配分类"
+          className="categories-grid"
         >
-          {paginatedCategories.map((category) => (
+          {categories.map((category) => (
             <DataCard
               key={category.id}
               title={category.name}
@@ -692,8 +1095,7 @@ function CategoriesPage() {
         </DataCardGrid>
         <div className="categories-pagination">
           <div className="pagination-info">
-            第 {currentPage} / {totalPages} 页 · 共{' '}
-            {filteredCategories.length} 条
+            第 {currentPage} / {totalPages} 页 · 共 {totalCount} 条
           </div>
           <div className="pagination-controls">
             <button
@@ -769,6 +1171,37 @@ function CategoriesPage() {
         confirmTone="danger"
         onConfirm={handleConfirmDelete}
         onCancel={handleCloseDelete}
+      />
+      <ConfirmDialog
+        isOpen={isToggleOpen && Boolean(pendingToggleCategory)}
+        title="状态确认"
+        message={
+          pendingToggleCategory?.status === 'enabled'
+            ? '确认禁用该分类？'
+            : '确认启用该分类？'
+        }
+        description={
+          pendingToggleCategory
+            ? `分类：${pendingToggleCategory.name}`
+            : undefined
+        }
+        confirmLabel={
+          pendingToggleCategory?.status === 'enabled' ? '禁用' : '启用'
+        }
+        cancelLabel="取消"
+        onConfirm={handleConfirmToggle}
+        onCancel={handleCloseToggle}
+      />
+      <ToastNotice
+        isOpen={isSuccessOpen}
+        message={successMessage || '操作成功'}
+        onClose={() => setIsSuccessOpen(false)}
+      />
+      <ToastNotice
+        isOpen={isErrorOpen}
+        message={errorMessage || '系统异常'}
+        tone="error"
+        onClose={() => setIsErrorOpen(false)}
       />
     </DashboardLayout>
   )

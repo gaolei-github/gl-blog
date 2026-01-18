@@ -112,10 +112,58 @@
   box-shadow: 0 0 0 3px rgba(225, 113, 59, 0.12);
 }
 
+.categories-filter-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.categories-filter-button {
+  border: none;
+  background: var(--dashboard-navy);
+  color: #ffffff;
+  padding: 8px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease,
+    background 160ms ease;
+  box-shadow: 0 8px 16px rgba(39, 50, 70, 0.18);
+}
+
+.categories-filter-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 20px rgba(39, 50, 70, 0.22);
+}
+
+.categories-filter-button.ghost {
+  background: rgba(39, 50, 70, 0.08);
+  color: var(--dashboard-navy);
+  box-shadow: none;
+}
+
+.categories-filter-button.ghost:hover {
+  background: rgba(39, 50, 70, 0.14);
+  transform: translateY(-1px);
+  box-shadow: none;
+}
+
 .categories-select {
   position: relative;
   width: var(--filter-control-width);
   max-width: 100%;
+}
+
+.categories-modal-select {
+  width: 100%;
+}
+
+.categories-select-trigger:disabled {
+  background: rgba(39, 50, 70, 0.05);
+  color: var(--dashboard-muted);
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .categories-select-trigger {
@@ -217,6 +265,11 @@
   background: rgba(255, 255, 255, 0.7);
 }
 
+.categories-grid {
+  grid-template-columns: repeat(auto-fill, minmax(240px, 320px));
+  justify-content: flex-start;
+}
+
 .categories-modal-form {
   display: flex;
   flex-direction: column;
@@ -255,6 +308,23 @@
 .categories-modal-input:disabled {
   background: rgba(39, 50, 70, 0.05);
   color: var(--dashboard-muted);
+}
+
+.categories-detail-value {
+  border-radius: 12px;
+  border: 1px solid rgba(176, 136, 92, 0.16);
+  padding: 10px 12px;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.7);
+  min-height: 40px;
+  box-sizing: border-box;
+  color: var(--dashboard-ink);
+  line-height: 1.5;
+}
+
+.categories-detail-multiline {
+  min-height: 90px;
+  white-space: pre-wrap;
 }
 
 .categories-modal-textarea {
