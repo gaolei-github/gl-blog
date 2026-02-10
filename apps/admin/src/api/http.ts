@@ -138,9 +138,14 @@ const request = async <T>(
   }: InternalOptions = {}
 ): Promise<T> => {
   const authToken = getAuthToken()
+  const isFormDataPayload =
+    typeof FormData !== 'undefined' && body instanceof FormData
   const nextHeaders: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...headers,
+    ...(headers ?? {}),
+  }
+
+  if (!isFormDataPayload && !nextHeaders['Content-Type']) {
+    nextHeaders['Content-Type'] = 'application/json'
   }
 
   if (authToken && !nextHeaders.Authorization) {
@@ -150,7 +155,12 @@ const request = async <T>(
   const response = await fetch(buildUrl(path), {
     method,
     headers: nextHeaders,
-    body: body ? JSON.stringify(body) : undefined,
+    body:
+      body === undefined
+        ? undefined
+        : isFormDataPayload
+          ? (body as FormData)
+          : JSON.stringify(body),
     signal,
   })
 
@@ -201,6 +211,17 @@ export const postJson = async <T>(
     body,
   })
 
+export const postFormData = async <T>(
+  path: string,
+  body: FormData,
+  options: Omit<RequestOptions, 'method' | 'body'> = {}
+): Promise<T> =>
+  request<T>(path, {
+    ...options,
+    method: 'POST',
+    body,
+  })
+
 export const putJson = async <T>(
   path: string,
   body: unknown,
@@ -221,6 +242,17 @@ export const deleteJson = async <T>(
     method: 'DELETE',
   })
 
+export const deleteJsonWithBody = async <T>(
+  path: string,
+  body: unknown,
+  options: Omit<RequestOptions, 'method' | 'body'> = {}
+): Promise<T> =>
+  request<T>(path, {
+    ...options,
+    method: 'DELETE',
+    body,
+  })
+
 export const patchJson = async <T>(
   path: string,
   body: unknown,
@@ -230,4 +262,13 @@ export const patchJson = async <T>(
     ...options,
     method: 'PATCH',
     body,
+  })
+
+export const getJson = async <T>(
+  path: string,
+  options: Omit<RequestOptions, 'method' | 'body'> = {}
+): Promise<T> =>
+  request<T>(path, {
+    ...options,
+    method: 'GET',
   })

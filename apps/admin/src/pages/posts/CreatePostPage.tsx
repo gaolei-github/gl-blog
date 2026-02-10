@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useRef, useState } from 'react'
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { Extension, type Editor } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
@@ -10,11 +10,26 @@ import { Table } from '@tiptap/extension-table'
 import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableRow } from '@tiptap/extension-table-row'
+import { useNavigate, useParams } from 'react-router-dom'
+import { createCategory, fetchCategoryPage } from '../../api/categories'
+import { removeFile, uploadFile } from '../../api/files'
+import {
+  createPost,
+  fetchPostDetail,
+  type PostPayload,
+  updatePost,
+} from '../../api/posts'
+import { createTag, fetchTagPage } from '../../api/tags'
 import DashboardLayout from '../../components/dashboard-layout/DashboardLayout'
+import ToastNotice from '../../components/toast-notice/ToastNotice'
 import './create-post-page.css'
 
-const defaultCategories = ['策略', '设计', '增长', '运营']
-const defaultTags = ['内容', '流程', '协作', '增长', '策略', '设计']
+type OptionItem = {
+  id: string
+  name: string
+}
+
+const DEFAULT_USER_ID = 10001
 const codeLanguages = [
   { value: 'text', label: '纯文本' },
   { value: 'javascript', label: 'JavaScript' },
@@ -75,17 +90,132 @@ const codeBlockWithLanguage = CodeBlock.extend({
   },
 })
 
+const createSlug = (value: string) => {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+}
+
+const toDateTimeLocalValue = (value?: string | null) => {
+  if (!value) {
+    return ''
+  }
+
+  const normalized = value.includes('T') ? value : value.replace(' ', 'T')
+  return normalized.slice(0, 16)
+}
+
+const toApiDateTime = (value: string) => {
+  if (!value) {
+    return ''
+  }
+
+  const withSeconds = value.length === 16 ? `${value}:00` : value
+  return withSeconds
+}
+
+const parseIdValue = (value: unknown): string => {
+  if (typeof value === 'string') {
+    return value.trim()
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return String(value)
+  }
+
+  if (typeof value === 'bigint') {
+    return value.toString()
+  }
+
+  return ''
+}
+
+const parseCategoryId = (detail: Record<string, unknown>) => {
+  const category = detail.category
+  if (category && typeof category === 'object' && !Array.isArray(category)) {
+    const idFromCategory = parseIdValue((category as { id?: unknown }).id)
+    if (idFromCategory) {
+      return idFromCategory
+    }
+  }
+
+  return (
+    parseIdValue(detail.categoryId) ||
+    parseIdValue(detail.postCategoryId) ||
+    parseIdValue(detail.category_id) ||
+    ''
+  )
+}
+
+const parseTagIds = (detail: Record<string, unknown>) => {
+  const candidates = [
+    detail.tagIds,
+    detail.postTagIds,
+    detail.tagIdList,
+    detail.tags,
+  ]
+
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue
+    }
+
+    if (Array.isArray(candidate)) {
+      const parsed = candidate
+        .map((item) => {
+          if (item && typeof item === 'object' && !Array.isArray(item)) {
+            return (
+              parseIdValue((item as { id?: unknown }).id) ||
+              parseIdValue((item as { tagId?: unknown }).tagId)
+            )
+          }
+          return parseIdValue(item)
+        })
+        .filter(Boolean)
+
+      if (parsed.length > 0) {
+        return Array.from(new Set(parsed))
+      }
+      continue
+    }
+
+    if (typeof candidate === 'string') {
+      const parsed = candidate
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+
+      if (parsed.length > 0) {
+        return Array.from(new Set(parsed))
+      }
+    }
+  }
+
+  return []
+}
+
 function CreatePostPage() {
-  const [categoryOptions, setCategoryOptions] =
-    useState(defaultCategories)
-  const [selectedCategory, setSelectedCategory] = useState('')
-  const [tagOptions, setTagOptions] = useState(defaultTags)
+  const navigate = useNavigate()
+  const { id } = useParams<{ id: string }>()
+  const isEditMode = Boolean(id)
+  const [title, setTitle] = useState('')
+  const [slug, setSlug] = useState('')
+  const [subtitle, setSubtitle] = useState('')
+  const [summary, setSummary] = useState('')
+  const [coverUrl, setCoverUrl] = useState('')
+  const [categoryOptions, setCategoryOptions] = useState<OptionItem[]>([])
+  const [selectedCategoryId, setSelectedCategoryId] = useState('')
+  const [tagOptions, setTagOptions] = useState<OptionItem[]>([])
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [content, setContent] = useState('')
   const [postSource, setPostSource] = useState<'original' | 'repost'>('original')
   const [repostSource, setRepostSource] = useState('')
   const [visibility, setVisibility] = useState(defaultVisibility.value)
   const [featuredStatus, setFeaturedStatus] = useState('no')
+  const [pinnedStatus, setPinnedStatus] = useState('no')
   const [publishTime, setPublishTime] = useState('')
   const [isEditorFullscreen, setIsEditorFullscreen] = useState(false)
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false)
@@ -103,38 +233,221 @@ function CreatePostPage() {
   const editorCardRef = useRef<HTMLDivElement | null>(null)
   const [codeLanguage, setCodeLanguage] = useState(defaultCodeLanguage)
   const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null)
+  const [isCoverUploading, setIsCoverUploading] = useState(false)
+  const [isCoverRemoving, setIsCoverRemoving] = useState(false)
+  const [isEditorImageUploading, setIsEditorImageUploading] = useState(false)
   const coverInputRef = useRef<HTMLInputElement | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const [initialEditorContent, setInitialEditorContent] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isLoadingDetail, setIsLoadingDetail] = useState(false)
+  const [isSuccessOpen, setIsSuccessOpen] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+  const [isErrorOpen, setIsErrorOpen] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
 
-  const handleCreateCategory = () => {
+  const handleCreateCategory = async () => {
     const trimmed = newCategoryName.trim()
     if (!trimmed) {
       return
     }
 
-    if (!categoryOptions.includes(trimmed)) {
-      setCategoryOptions((current) => [...current, trimmed])
+    try {
+      const response = await createCategory({
+        name: trimmed,
+        slug: createSlug(trimmed),
+        parentId: '0',
+        level: 1,
+        sortNo: 0,
+        description: '',
+        enabled: 1,
+        userId: String(DEFAULT_USER_ID),
+      })
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '分类创建失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      const categoryResponse = await fetchCategoryPage({
+        pageNo: 1,
+        pageSize: 200,
+        keyword: '',
+        status: 1,
+      })
+      const records = categoryResponse.data?.records ?? []
+      const nextOptions = records.map((record) => ({
+        id: String(record.id),
+        name: record.name,
+      }))
+      setCategoryOptions(nextOptions)
+      const currentOption = nextOptions.find((item) => item.name === trimmed)
+      setSelectedCategoryId(currentOption ? currentOption.id : '')
+      setNewCategoryName('')
+      setIsCategoryModalOpen(false)
+    } catch {
+      setErrorMessage('分类创建失败')
+      setIsErrorOpen(true)
     }
-    setSelectedCategory(trimmed)
-    setNewCategoryName('')
-    setIsCategoryModalOpen(false)
   }
 
-  const handleCreateTag = () => {
+  const handleCreateTag = async () => {
     const trimmed = newTagName.trim()
     if (!trimmed) {
       return
     }
 
-    if (!tagOptions.includes(trimmed)) {
-      setTagOptions((current) => [...current, trimmed])
+    try {
+      const response = await createTag({
+        name: trimmed,
+        slug: createSlug(trimmed),
+        description: '',
+        enabled: 1,
+      })
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '标签创建失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      const tagResponse = await fetchTagPage({
+        pageNo: 1,
+        pageSize: 200,
+        keyword: '',
+      })
+      const records = tagResponse.data?.records ?? []
+      const nextOptions = records.map((record) => ({
+        id: String(record.id),
+        name: record.name,
+      }))
+      setTagOptions(nextOptions)
+      const currentOption = nextOptions.find((item) => item.name === trimmed)
+      if (currentOption) {
+        setSelectedTags((current) =>
+          current.includes(currentOption.id) ? current : [...current, currentOption.id]
+        )
+      }
+      setNewTagName('')
+      setIsTagModalOpen(false)
+    } catch {
+      setErrorMessage('标签创建失败')
+      setIsErrorOpen(true)
     }
-    setSelectedTags((current) =>
-      current.includes(trimmed) ? current : [...current, trimmed]
-    )
-    setNewTagName('')
-    setIsTagModalOpen(false)
   }
+
+  useEffect(() => {
+    const loadOptions = async () => {
+      try {
+        const [categoryResponse, tagResponse] = await Promise.all([
+          fetchCategoryPage({
+            pageNo: 1,
+            pageSize: 200,
+            keyword: '',
+            status: 1,
+          }),
+          fetchTagPage({
+            pageNo: 1,
+            pageSize: 200,
+            keyword: '',
+          }),
+        ])
+
+        if (categoryResponse.success) {
+          const categoryRecords = categoryResponse.data?.records ?? []
+          setCategoryOptions(
+            categoryRecords.map((record) => ({
+              id: String(record.id),
+              name: record.name,
+            }))
+          )
+        }
+
+        if (tagResponse.success) {
+          const tagRecords = tagResponse.data?.records ?? []
+          setTagOptions(
+            tagRecords.map((record) => ({
+              id: String(record.id),
+              name: record.name,
+            }))
+          )
+        }
+      } catch {
+        setErrorMessage('分类或标签加载失败')
+        setIsErrorOpen(true)
+      }
+    }
+
+    void loadOptions()
+  }, [])
+
+  const isBlobUrl = (value: string) => value.startsWith('blob:')
+  const resolveObjectName = (value: string) => {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return ''
+    }
+
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      return trimmed.replace(/^\/+/, '')
+    }
+
+    try {
+      const url = new URL(trimmed)
+      const segments = url.pathname.split('/').filter(Boolean)
+      if (segments.length <= 1) {
+        return segments.join('')
+      }
+      return segments.slice(1).join('/')
+    } catch {
+      return ''
+    }
+  }
+
+  useEffect(() => {
+    if (!id) {
+      return
+    }
+
+    const loadDetail = async () => {
+      try {
+        setIsLoadingDetail(true)
+        const response = await fetchPostDetail(id)
+
+        if (!response.success || !response.data) {
+          setErrorMessage(response.errorMessage || '帖子详情加载失败')
+          setIsErrorOpen(true)
+          return
+        }
+
+        const detail = response.data
+        setTitle(detail.title || '')
+        setSlug(detail.slug || '')
+        setSubtitle(detail.subtitle || '')
+        setSummary(detail.summary || '')
+        setCoverUrl(detail.coverUrl || '')
+        setCoverPreviewUrl(detail.coverUrl || null)
+        setVisibility(String(detail.visibility ?? 0))
+        setFeaturedStatus(detail.featured === 1 ? 'yes' : 'no')
+        setPinnedStatus(detail.pinned === 1 ? 'yes' : 'no')
+        setPublishTime(toDateTimeLocalValue(detail.publishTime))
+        setPostSource(detail.sourceType === 0 ? 'original' : 'repost')
+        setRepostSource(detail.sourceUrl || '')
+        const detailRecord = detail as unknown as Record<string, unknown>
+        setSelectedCategoryId(parseCategoryId(detailRecord))
+        setSelectedTags(parseTagIds(detailRecord))
+        setInitialEditorContent(detail.content || '')
+      } catch {
+        setErrorMessage('帖子详情加载失败')
+        setIsErrorOpen(true)
+      } finally {
+        setIsLoadingDetail(false)
+      }
+    }
+
+    void loadDetail()
+  }, [id])
 
   useEffect(() => {
     if (!isCategoryOpen) {
@@ -205,7 +518,7 @@ function CreatePostPage() {
 
   useEffect(() => {
     return () => {
-      if (coverPreviewUrl) {
+      if (coverPreviewUrl && isBlobUrl(coverPreviewUrl)) {
         URL.revokeObjectURL(coverPreviewUrl)
       }
     }
@@ -262,49 +575,41 @@ function CreatePostPage() {
     }
   }, [])
 
-  const tagDisplayText =
-    selectedTags.length > 0 ? selectedTags.join('、') : '请选择标签'
   const selectedVisibilityLabel =
     visibilityOptions.find((option) => option.value === visibility)?.label ??
     defaultVisibility.label
+
+  const selectedCategoryLabel = useMemo(() => {
+    if (!selectedCategoryId) {
+      return '请选择分类'
+    }
+
+    return (
+      categoryOptions.find((category) => category.id === selectedCategoryId)?.name ||
+      '请选择分类'
+    )
+  }, [categoryOptions, selectedCategoryId])
+
+  const tagDisplayText = useMemo(() => {
+    if (selectedTags.length === 0) {
+      return '请选择标签'
+    }
+
+    const selectedNames = selectedTags
+      .map((tagId) => tagOptions.find((tag) => tag.id === tagId)?.name)
+      .filter(Boolean)
+
+    return selectedNames.length > 0 ? selectedNames.join('、') : '请选择标签'
+  }, [selectedTags, tagOptions])
+
   const normalizedCategoryQuery = categoryQuery.trim().toLowerCase()
   const normalizedTagQuery = tagQuery.trim().toLowerCase()
   const filteredCategories = categoryOptions.filter((category) =>
-    category.toLowerCase().includes(normalizedCategoryQuery)
+    category.name.toLowerCase().includes(normalizedCategoryQuery)
   )
   const filteredTags = tagOptions.filter((tag) =>
-    tag.toLowerCase().includes(normalizedTagQuery)
+    tag.name.toLowerCase().includes(normalizedTagQuery)
   )
-
-  const handleCategoryQuerySubmit = () => {
-    const trimmed = categoryQuery.trim()
-    if (!trimmed) {
-      return
-    }
-
-    if (!categoryOptions.includes(trimmed)) {
-      setCategoryOptions((current) => [...current, trimmed])
-    }
-    setSelectedCategory(trimmed)
-    setCategoryQuery('')
-    setIsCategoryOpen(false)
-  }
-
-  const handleTagQuerySubmit = () => {
-    const trimmed = tagQuery.trim()
-    if (!trimmed) {
-      return
-    }
-
-    if (!tagOptions.includes(trimmed)) {
-      setTagOptions((current) => [...current, trimmed])
-    }
-    setSelectedTags((current) =>
-      current.includes(trimmed) ? current : [...current, trimmed]
-    )
-    setTagQuery('')
-    setIsTagOpen(false)
-  }
 
   const handlePostSourceChange = (event: ChangeEvent<HTMLInputElement>) => {
     const nextSource = event.target.value === 'repost' ? 'repost' : 'original'
@@ -316,6 +621,10 @@ function CreatePostPage() {
 
   const handleFeaturedChange = (event: ChangeEvent<HTMLInputElement>) => {
     setFeaturedStatus(event.target.value === 'yes' ? 'yes' : 'no')
+  }
+
+  const handlePinnedChange = (event: ChangeEvent<HTMLInputElement>) => {
+    setPinnedStatus(event.target.value === 'yes' ? 'yes' : 'no')
   }
 
   const handlePublishTimeChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -363,24 +672,74 @@ function CreatePostPage() {
     )
   }
 
-  const handleCoverChange = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+  const handleCoverChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.target
+    const file = input.files?.[0]
     if (!file) {
       return
     }
 
-    if (coverPreviewUrl) {
-      URL.revokeObjectURL(coverPreviewUrl)
-    }
+    setIsCoverUploading(true)
 
-    setCoverPreviewUrl(URL.createObjectURL(file))
+    try {
+      const response = await uploadFile({ file, folder: 'post/cover' })
+      if (!response.success || !response.data?.objectUrl) {
+        setErrorMessage(response.errorMessage || '封面上传失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      if (coverPreviewUrl && isBlobUrl(coverPreviewUrl)) {
+        URL.revokeObjectURL(coverPreviewUrl)
+      }
+
+      setCoverUrl(response.data.objectUrl)
+      setCoverPreviewUrl(response.data.objectUrl)
+    } catch {
+      setErrorMessage('封面上传失败')
+      setIsErrorOpen(true)
+    } finally {
+      setIsCoverUploading(false)
+      input.value = ''
+    }
   }
 
-  const handleCoverRemove = () => {
-    if (coverPreviewUrl) {
+  const handleCoverRemove = async () => {
+    if (isCoverRemoving) {
+      return
+    }
+
+    const nextCoverUrl = coverUrl.trim()
+    if (nextCoverUrl) {
+      const objectName = resolveObjectName(nextCoverUrl)
+      if (!objectName) {
+        setErrorMessage('封面对象名解析失败，无法删除')
+        setIsErrorOpen(true)
+        return
+      }
+
+      try {
+        setIsCoverRemoving(true)
+        const response = await removeFile({ objectName })
+        if (!response.success) {
+          setErrorMessage(response.errorMessage || '封面删除失败')
+          setIsErrorOpen(true)
+          return
+        }
+      } catch {
+        setErrorMessage('封面删除失败')
+        setIsErrorOpen(true)
+        return
+      } finally {
+        setIsCoverRemoving(false)
+      }
+    }
+
+    if (coverPreviewUrl && isBlobUrl(coverPreviewUrl)) {
       URL.revokeObjectURL(coverPreviewUrl)
     }
     setCoverPreviewUrl(null)
+    setCoverUrl('')
     if (coverInputRef.current) {
       coverInputRef.current.value = ''
     }
@@ -427,6 +786,16 @@ function CreatePostPage() {
     },
   })
 
+  useEffect(() => {
+    if (!editor || initialEditorContent === null) {
+      return
+    }
+
+    editor.commands.setContent(initialEditorContent)
+    setContent(initialEditorContent)
+    setInitialEditorContent(null)
+  }, [editor, initialEditorContent])
+
   const handleAddLink = () => {
     if (!editor) {
       return
@@ -456,21 +825,31 @@ function CreatePostPage() {
     }
   }
 
-  const handleImageUpload = (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
+  const handleImageUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.target
+    const file = input.files?.[0]
     if (!file || !editor) {
       return
     }
 
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result
-      if (typeof result === 'string') {
-        editor.chain().focus().setImage({ src: result }).run()
+    setIsEditorImageUploading(true)
+
+    try {
+      const response = await uploadFile({ file, folder: 'post/content' })
+      if (!response.success || !response.data?.objectUrl) {
+        setErrorMessage(response.errorMessage || '图片上传失败')
+        setIsErrorOpen(true)
+        return
       }
+
+      editor.chain().focus().setImage({ src: response.data.objectUrl }).run()
+    } catch {
+      setErrorMessage('图片上传失败')
+      setIsErrorOpen(true)
+    } finally {
+      setIsEditorImageUploading(false)
+      input.value = ''
     }
-    reader.readAsDataURL(file)
-    event.target.value = ''
   }
 
   const handleInsertTable = () => {
@@ -535,13 +914,137 @@ function CreatePostPage() {
     editor?.isActive('paragraph', { textIndent: textIndentValue }) ||
     editor?.isActive('heading', { textIndent: textIndentValue })
 
+  const buildPayload = (status: 0 | 1 | 2): PostPayload | null => {
+    const nextTitle = title.trim()
+    const nextSlug = slug.trim()
+    const nextContent = content.trim()
+    const nextPublishTime = toApiDateTime(publishTime)
+
+    if (!nextTitle) {
+      setErrorMessage('标题不能为空')
+      setIsErrorOpen(true)
+      return null
+    }
+
+    if (!nextSlug) {
+      setErrorMessage('slug 不能为空')
+      setIsErrorOpen(true)
+      return null
+    }
+
+    if (!nextContent) {
+      setErrorMessage('正文不能为空')
+      setIsErrorOpen(true)
+      return null
+    }
+
+    if (!nextPublishTime) {
+      setErrorMessage('发布时间不能为空')
+      setIsErrorOpen(true)
+      return null
+    }
+
+    if (status === 2 && new Date(nextPublishTime).getTime() <= Date.now()) {
+      setErrorMessage('定时发布时间必须大于当前时间')
+      setIsErrorOpen(true)
+      return null
+    }
+
+    const sourceType = postSource === 'original' ? 0 : 1
+    const sourceUrl = repostSource.trim()
+
+    if (sourceType !== 0 && !sourceUrl) {
+      setErrorMessage('非原创帖子必须填写来源链接')
+      setIsErrorOpen(true)
+      return null
+    }
+
+    return {
+      userId: DEFAULT_USER_ID,
+      slug: nextSlug,
+      title: nextTitle,
+      subtitle: subtitle.trim(),
+      summary: summary.trim(),
+      contentType: 2,
+      content: nextContent,
+      coverUrl: coverUrl.trim(),
+      status,
+      visibility: Number(visibility) as 0 | 1 | 2 | 3,
+      allowComment: 1,
+      featured: featuredStatus === 'yes' ? 1 : 0,
+      pinned: pinnedStatus === 'yes' ? 1 : 0,
+      weight: 0,
+      sourceType,
+      sourceUrl,
+      extJson: '',
+      publishTime: nextPublishTime,
+      tagIds: selectedTags,
+      categoryId: selectedCategoryId || undefined,
+    }
+  }
+
+  const handleSubmit = async (mode: 'save' | 'publish') => {
+    if (isSubmitting) {
+      return
+    }
+
+    const nextPublishTime = toApiDateTime(publishTime)
+    const publishStatus =
+      mode === 'save'
+        ? 0
+        : new Date(nextPublishTime).getTime() > Date.now()
+          ? 2
+          : 1
+
+    const payload = buildPayload(publishStatus)
+    if (!payload) {
+      return
+    }
+
+    try {
+      setIsSubmitting(true)
+
+      const response = isEditMode && id
+        ? await updatePost(id, payload)
+        : await createPost(payload)
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '提交失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      setSuccessMessage(isEditMode ? '帖子更新成功' : '帖子创建成功')
+      setIsSuccessOpen(true)
+
+      window.setTimeout(() => {
+        navigate('/posts')
+      }, 900)
+    } catch {
+      setErrorMessage('提交失败')
+      setIsErrorOpen(true)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  if (isLoadingDetail) {
+    return (
+      <DashboardLayout>
+        <section className="create-post-card">
+          <div className="create-post-title">帖子数据加载中...</div>
+        </section>
+      </DashboardLayout>
+    )
+  }
+
   return (
     <DashboardLayout>
       <section className="create-post-card">
         <div className="create-post-header">
           <div>
             <div className="card-label">帖子管理</div>
-            <div className="create-post-title">发布新帖</div>
+            <div className="create-post-title">{isEditMode ? '编辑帖子' : '发布新帖'}</div>
           </div>
         </div>
         <div className="create-post-form">
@@ -553,9 +1056,45 @@ function CreatePostPage() {
                 type="text"
                 className="form-input form-input-title"
                 placeholder="请输入标题"
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
               />
             </span>
           </label>
+
+          <label className="form-field" htmlFor="post-slug">
+            <span className="form-label">slug</span>
+            <span className="summary-input-wrap">
+              <input
+                id="post-slug"
+                type="text"
+                className="form-input"
+                placeholder="例如：spring-boot-guide"
+                value={slug}
+                onChange={(event) => setSlug(event.target.value)}
+                onBlur={() => {
+                  if (!slug.trim() && title.trim()) {
+                    setSlug(createSlug(title))
+                  }
+                }}
+              />
+            </span>
+          </label>
+
+          <label className="form-field" htmlFor="post-subtitle">
+            <span className="form-label">副标题</span>
+            <span className="summary-input-wrap">
+              <input
+                id="post-subtitle"
+                type="text"
+                className="form-input"
+                placeholder="请输入副标题"
+                value={subtitle}
+                onChange={(event) => setSubtitle(event.target.value)}
+              />
+            </span>
+          </label>
+
           <div className="form-field">
             <span className="form-label">封面</span>
             <div className="cover-uploader">
@@ -565,6 +1104,7 @@ function CreatePostPage() {
                 type="file"
                 accept="image/*"
                 className="cover-input"
+                disabled={isCoverUploading}
                 onChange={handleCoverChange}
               />
               <label htmlFor="post-cover" className="cover-preview">
@@ -572,7 +1112,7 @@ function CreatePostPage() {
                   <img src={coverPreviewUrl} alt="封面预览" />
                 ) : (
                   <div className="cover-placeholder">
-                    <span>点击上传封面</span>
+                    <span>{isCoverUploading ? '封面上传中...' : '点击上传封面'}</span>
                     <span className="cover-tip">建议尺寸 1200 × 630</span>
                   </div>
                 )}
@@ -582,14 +1122,18 @@ function CreatePostPage() {
                   <button
                     type="button"
                     className="cover-link"
-                    onClick={handleCoverRemove}
+                    onClick={() => {
+                      void handleCoverRemove()
+                    }}
+                    disabled={isCoverUploading || isCoverRemoving}
                   >
-                    移除
+                    {isCoverRemoving ? '移除中...' : '移除'}
                   </button>
                 ) : null}
               </div>
             </div>
           </div>
+
           <label className="form-field form-field-summary" htmlFor="post-summary">
             <span className="form-label">摘要</span>
             <span className="summary-input-wrap">
@@ -598,6 +1142,8 @@ function CreatePostPage() {
                 className="form-textarea summary-textarea"
                 placeholder="写一段能概括文章核心观点的摘要"
                 rows={4}
+                value={summary}
+                onChange={(event) => setSummary(event.target.value)}
               />
             </span>
           </label>
@@ -617,6 +1163,7 @@ function CreatePostPage() {
                     type="file"
                     accept="image/*"
                     className="editor-image-input"
+                    disabled={isEditorImageUploading}
                     onChange={handleImageUpload}
                   />
                   <button
@@ -758,8 +1305,9 @@ function CreatePostPage() {
                     type="button"
                     className="editor-button"
                     onClick={handleAddImage}
+                    disabled={isEditorImageUploading}
                   >
-                    图片
+                    {isEditorImageUploading ? '图片上传中...' : '图片'}
                   </button>
                   <button
                     type="button"
@@ -860,10 +1408,10 @@ function CreatePostPage() {
                 >
                   <span
                     className={`select-value ${
-                      selectedCategory ? '' : 'select-placeholder'
+                      selectedCategoryId ? '' : 'select-placeholder'
                     }`}
                   >
-                    {selectedCategory || '请选择分类'}
+                    {selectedCategoryLabel}
                   </span>
                   <span className="select-arrow" aria-hidden="true" />
                 </button>
@@ -875,12 +1423,6 @@ function CreatePostPage() {
                       placeholder="搜索分类"
                       value={categoryQuery}
                       onChange={(event) => setCategoryQuery(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          handleCategoryQuerySubmit()
-                        }
-                      }}
                     />
                     {filteredCategories.length === 0 ? (
                       <div className="select-empty">暂无匹配分类</div>
@@ -888,22 +1430,22 @@ function CreatePostPage() {
                       filteredCategories.map((category) => (
                         <button
                           type="button"
-                          key={category}
+                          key={category.id}
                           className={`select-option ${
-                            selectedCategory === category ? 'active' : ''
+                            selectedCategoryId === category.id ? 'active' : ''
                           }`}
-                        role="option"
-                        aria-selected={selectedCategory === category}
-                        onClick={() => {
-                          setSelectedCategory((current) =>
-                            current === category ? '' : category
-                          )
-                          setIsCategoryOpen(false)
-                        }}
-                      >
-                        {renderOptionLabel(category, categoryQuery)}
-                      </button>
-                    ))
+                          role="option"
+                          aria-selected={selectedCategoryId === category.id}
+                          onClick={() => {
+                            setSelectedCategoryId((current) =>
+                              current === category.id ? '' : category.id
+                            )
+                            setIsCategoryOpen(false)
+                          }}
+                        >
+                          {renderOptionLabel(category.name, categoryQuery)}
+                        </button>
+                      ))
                   )}
                   </div>
                 ) : null}
@@ -945,12 +1487,6 @@ function CreatePostPage() {
                       placeholder="搜索标签"
                       value={tagQuery}
                       onChange={(event) => setTagQuery(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          handleTagQuerySubmit()
-                        }
-                      }}
                     />
                     {filteredTags.length === 0 ? (
                       <div className="select-empty">暂无匹配标签</div>
@@ -958,24 +1494,24 @@ function CreatePostPage() {
                       filteredTags.map((tag) => (
                         <button
                           type="button"
-                          key={tag}
+                          key={tag.id}
                           className={`select-option ${
-                            selectedTags.includes(tag) ? 'active' : ''
+                            selectedTags.includes(tag.id) ? 'active' : ''
                           }`}
                           role="option"
-                          aria-selected={selectedTags.includes(tag)}
-                        onClick={() => {
-                          setSelectedTags((current) =>
-                            current.includes(tag)
-                              ? current.filter((item) => item !== tag)
-                              : [...current, tag]
-                          )
-                        }}
-                      >
-                        {renderOptionLabel(tag, tagQuery)}
-                      </button>
-                    ))
-                  )}
+                          aria-selected={selectedTags.includes(tag.id)}
+                          onClick={() => {
+                            setSelectedTags((current) =>
+                              current.includes(tag.id)
+                                ? current.filter((item) => item !== tag.id)
+                                : [...current, tag.id]
+                            )
+                          }}
+                        >
+                          {renderOptionLabel(tag.name, tagQuery)}
+                        </button>
+                      ))
+                    )}
                   </div>
                 ) : null}
               </div>
@@ -1017,7 +1553,7 @@ function CreatePostPage() {
                   <input
                     type="text"
                     className="form-input post-source-input"
-                    placeholder="请输入转载来源"
+                    placeholder="请输入转载来源链接"
                     value={repostSource}
                     onChange={(event) => setRepostSource(event.target.value)}
                   />
@@ -1050,6 +1586,33 @@ function CreatePostPage() {
               </label>
             </div>
           </div>
+
+          <div className="form-field form-field-featured">
+            <span className="form-label" id="post-pinned-label">是否置顶</span>
+            <div className="form-control-row post-source-control">
+              <label className="post-source-option">
+                <input
+                  type="radio"
+                  name="post-pinned"
+                  value="no"
+                  checked={pinnedStatus === 'no'}
+                  onChange={handlePinnedChange}
+                />
+                否
+              </label>
+              <label className="post-source-option">
+                <input
+                  type="radio"
+                  name="post-pinned"
+                  value="yes"
+                  checked={pinnedStatus === 'yes'}
+                  onChange={handlePinnedChange}
+                />
+                是
+              </label>
+            </div>
+          </div>
+
           <label className="form-field form-field-publish-time" htmlFor="post-publish-time">
             <span className="form-label">发布时间</span>
             <span className="publish-time-wrap">
@@ -1064,11 +1627,25 @@ function CreatePostPage() {
           </label>
         </div>
         <div className="create-post-actions">
-          <button type="button" className="create-post-button create-post-button-secondary">
-            保存
+          <button
+            type="button"
+            className="create-post-button create-post-button-secondary"
+            disabled={isSubmitting}
+            onClick={() => {
+              void handleSubmit('save')
+            }}
+          >
+            {isSubmitting ? '提交中...' : '保存草稿'}
           </button>
-          <button type="button" className="create-post-button create-post-button-primary">
-            发布
+          <button
+            type="button"
+            className="create-post-button create-post-button-primary"
+            disabled={isSubmitting}
+            onClick={() => {
+              void handleSubmit('publish')
+            }}
+          >
+            {isSubmitting ? '提交中...' : '发布'}
           </button>
         </div>
         {isCategoryModalOpen ? (
@@ -1104,7 +1681,9 @@ function CreatePostPage() {
                 <button
                   type="button"
                   className="modal-primary"
-                  onClick={handleCreateCategory}
+                  onClick={() => {
+                    void handleCreateCategory()
+                  }}
                 >
                   创建并选择
                 </button>
@@ -1145,7 +1724,9 @@ function CreatePostPage() {
                 <button
                   type="button"
                   className="modal-primary"
-                  onClick={handleCreateTag}
+                  onClick={() => {
+                    void handleCreateTag()
+                  }}
                 >
                   创建并选择
                 </button>
@@ -1153,6 +1734,18 @@ function CreatePostPage() {
             </div>
           </div>
         ) : null}
+        <ToastNotice
+          isOpen={isSuccessOpen}
+          message={successMessage}
+          tone="success"
+          onClose={() => setIsSuccessOpen(false)}
+        />
+        <ToastNotice
+          isOpen={isErrorOpen}
+          message={errorMessage}
+          tone="error"
+          onClose={() => setIsErrorOpen(false)}
+        />
       </section>
     </DashboardLayout>
   )

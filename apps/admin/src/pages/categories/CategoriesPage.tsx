@@ -108,12 +108,10 @@ function CategoriesPage() {
   const totalPages = useMemo(() => {
     return Math.max(1, Math.ceil(totalCount / pageSize))
   }, [pageSize, totalCount])
-
-  const enabledCount = useMemo(() => {
+  useMemo(() => {
     return categories.filter((category) => category.status === 'enabled')
-      .length
-  }, [categories])
-
+        .length
+  }, [categories]);
   const activeCategory = useMemo(() => {
     if (!selectedCategoryId) {
       return null
@@ -669,9 +667,6 @@ function CategoriesPage() {
             </div>
           </div>
           <div className="categories-header-actions">
-            <span className="categories-count">
-              启用 {enabledCount} / {categories.length}
-            </span>
             <button
               type="button"
               className="category-create-button"

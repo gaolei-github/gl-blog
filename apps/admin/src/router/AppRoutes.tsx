@@ -62,6 +62,14 @@ function AppRoutes() {
         }
       />
       <Route
+        path="/posts/edit/:id"
+        element={
+          <RequireAuth>
+            <CreatePostPage />
+          </RequireAuth>
+        }
+      />
+      <Route
         path="/tags"
         element={
           <RequireAuth>

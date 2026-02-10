@@ -5,6 +5,8 @@ interface DetailModalProps {
   isOpen: boolean
   title: string
   mode?: 'view' | 'edit'
+  cardClassName?: string
+  bodyClassName?: string
   closeLabel?: string
   cancelLabel?: string
   saveLabel?: string
@@ -17,6 +19,8 @@ function DetailModal({
   isOpen,
   title,
   mode = 'view',
+  cardClassName,
+  bodyClassName,
   closeLabel = '关闭',
   cancelLabel = '取消',
   saveLabel = '保存',
@@ -31,10 +35,24 @@ function DetailModal({
     return null
   }
 
+  const cardClassNames = [
+    'detail-modal-card',
+    cardClassName,
+  ]
+    .filter(Boolean)
+    .join(' ')
+
+  const bodyClassNames = [
+    'detail-modal-body',
+    bodyClassName,
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
     <div className="detail-modal-mask">
       <div
-        className="detail-modal-card"
+        className={cardClassNames}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -49,7 +67,7 @@ function DetailModal({
             {closeLabel}
           </button>
         </div>
-        <div className="detail-modal-body">{children}</div>
+        <div className={bodyClassNames}>{children}</div>
         <div className="detail-modal-footer">
           {isEdit ? (
             <>

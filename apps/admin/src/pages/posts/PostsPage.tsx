@@ -1,223 +1,206 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { deletePost, fetchPostDetail, fetchPostPage, type PostRecord } from '../../api/posts'
+import ConfirmDialog from '../../components/confirm-dialog/ConfirmDialog'
 import DashboardLayout from '../../components/dashboard-layout/DashboardLayout'
+import DetailModal from '../../components/detail-modal/DetailModal'
+import ToastNotice from '../../components/toast-notice/ToastNotice'
 import './posts-page.css'
 
-const postList = [
-  {
-    id: 'post-001',
-    title: '用 Turborepo 管理多应用',
-    content: '从任务编排到缓存策略，分享多应用项目协作的实战经验。',
-    author: 'Guolei Gao',
-    tags: ['构建', '协作'],
-    views: 1824,
-    createdAt: '2024-12-18',
-    status: 'published',
-  },
-  {
-    id: 'post-002',
-    title: '打造轻量级设计系统',
-    content: '从色彩、字体到组件拆分，保持统一视觉语言并提升交付效率。',
-    author: 'Liang Chen',
-    tags: ['设计', '组件'],
-    views: 946,
-    createdAt: '2024-11-30',
-    status: 'draft',
-  },
-  {
-    id: 'post-003',
-    title: '内容运营节奏拆解',
-    content: '记录选题、排期、复盘流程，帮助持续输出高质量内容。',
-    author: 'Yuki Wang',
-    tags: ['运营', '策略'],
-    views: 1320,
-    createdAt: '2024-10-21',
-    status: 'published',
-  },
-  {
-    id: 'post-004',
-    title: '数据化增长看板搭建',
-    content: '从埋点到指标拆分，搭建业务增长监控面板。',
-    author: 'Wen Li',
-    tags: ['数据', '增长'],
-    views: 1580,
-    createdAt: '2024-09-12',
-    status: 'published',
-  },
-  {
-    id: 'post-005',
-    title: '团队内容协作流程',
-    content: '梳理角色分工与协作节奏，提升内容交付稳定性。',
-    author: 'Jia Sun',
-    tags: ['协作', '流程'],
-    views: 1106,
-    createdAt: '2024-08-28',
-    status: 'draft',
-  },
-  {
-    id: 'post-006',
-    title: '多语言内容管理实践',
-    content: '多语言站点的内容结构与翻译流程实践总结。',
-    author: 'Nina Zhao',
-    tags: ['国际化', '内容'],
-    views: 920,
-    createdAt: '2024-08-06',
-    status: 'published',
-  },
-  {
-    id: 'post-007',
-    title: '效率工具链盘点',
-    content: '选择与搭配编辑、审校、发布的工具组合。',
-    author: 'Bo Yang',
-    tags: ['工具', '效率'],
-    views: 1432,
-    createdAt: '2024-07-19',
-    status: 'published',
-  },
-  {
-    id: 'post-008',
-    title: '增长实验复盘模板',
-    content: '从假设到结论的标准化实验复盘模板。',
-    author: 'Rui Chen',
-    tags: ['实验', '增长'],
-    views: 856,
-    createdAt: '2024-06-30',
-    status: 'draft',
-  },
-  {
-    id: 'post-009',
-    title: '专题栏目规划方法',
-    content: '围绕主题体系构建持续更新的栏目矩阵。',
-    author: 'Lan Hu',
-    tags: ['栏目', '规划'],
-    views: 1244,
-    createdAt: '2024-06-11',
-    status: 'published',
-  },
-  {
-    id: 'post-010',
-    title: '内容风格一致性检查',
-    content: '建立写作风格与品牌调性的统一检查机制。',
-    author: 'Ming Guo',
-    tags: ['风格', '品牌'],
-    views: 1012,
-    createdAt: '2024-05-22',
-    status: 'published',
-  },
+type PostStatus = '' | '0' | '1' | '2' | '3' | '4'
+
+const statusOptions: Array<{ value: PostStatus; label: string }> = [
+  { value: '', label: '全部' },
+  { value: '0', label: '草稿' },
+  { value: '1', label: '已发布' },
+  { value: '2', label: '定时发布' },
+  { value: '3', label: '已归档' },
+  { value: '4', label: '已下线' },
 ]
 
-const statusOptions = [
-  { value: 'published', label: '已发布' },
-  { value: 'draft', label: '草稿' },
-]
+const statusLabelMap: Record<string, string> = {
+  '0': '草稿',
+  '1': '已发布',
+  '2': '定时发布',
+  '3': '已归档',
+  '4': '已下线',
+}
+
+const visibilityLabelMap: Record<string, string> = {
+  '0': '公开',
+  '1': '私密',
+  '2': '不公开（仅链接访问）',
+  '3': '密码访问',
+}
+
+const normalizeTagNames = (value: unknown): string[] => {
+  if (!value) {
+    return []
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (typeof item === 'string') {
+          return item.trim()
+        }
+
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          const record = item as { name?: unknown; tagName?: unknown; label?: unknown }
+          if (typeof record.name === 'string') {
+            return record.name.trim()
+          }
+          if (typeof record.tagName === 'string') {
+            return record.tagName.trim()
+          }
+          if (typeof record.label === 'string') {
+            return record.label.trim()
+          }
+        }
+
+        return String(item).trim()
+      })
+      .filter(Boolean)
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      return []
+    }
+
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(trimmed) as unknown
+        return normalizeTagNames(parsed)
+      } catch {
+        // keep fallback splitting below
+      }
+    }
+
+    return trimmed
+      .split(/[，,、|]/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  }
+
+  return []
+}
+
+const parseTagText = (post: PostRecord) => {
+  const postRecord = post as unknown as Record<string, unknown>
+
+  const directCandidates: unknown[] = [
+    postRecord.tagNames,
+    postRecord.tagNameList,
+    postRecord.tags,
+    postRecord.tagList,
+    postRecord.tag_names,
+    postRecord.tag_name_list,
+  ]
+
+  for (const candidate of directCandidates) {
+    const names = normalizeTagNames(candidate)
+    if (names.length > 0) {
+      return Array.from(new Set(names)).join('、')
+    }
+  }
+
+  if (typeof postRecord.extJson === 'string' && postRecord.extJson.trim()) {
+    try {
+      const ext = JSON.parse(postRecord.extJson) as Record<string, unknown>
+      const extCandidates: unknown[] = [
+        ext.tagNames,
+        ext.tagNameList,
+        ext.tags,
+        ext.tagList,
+      ]
+      for (const candidate of extCandidates) {
+        const names = normalizeTagNames(candidate)
+        if (names.length > 0) {
+          return Array.from(new Set(names)).join('、')
+        }
+      }
+    } catch {
+      // ignore invalid extJson
+    }
+  }
+
+  return '-'
+}
 
 function PostsPage() {
   const navigate = useNavigate()
+  const statusMenuRef = useRef<HTMLDivElement | null>(null)
   const [pendingTitle, setPendingTitle] = useState('')
-  const [pendingAuthor, setPendingAuthor] = useState('')
-  const [pendingStartDate, setPendingStartDate] = useState('')
-  const [pendingEndDate, setPendingEndDate] = useState('')
-  const [pendingStatus, setPendingStatus] = useState('published')
+  const [pendingStatus, setPendingStatus] = useState<PostStatus>('')
   const [searchTitle, setSearchTitle] = useState('')
-  const [searchAuthor, setSearchAuthor] = useState('')
-  const [searchStartDate, setSearchStartDate] = useState('')
-  const [searchEndDate, setSearchEndDate] = useState('')
-  const [searchStatus, setSearchStatus] = useState('published')
+  const [searchStatus, setSearchStatus] = useState<PostStatus>('')
   const [pageSize, setPageSize] = useState(20)
   const [currentPage, setCurrentPage] = useState(1)
   const [pendingPage, setPendingPage] = useState('1')
-  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false)
   const [isStatusOpen, setIsStatusOpen] = useState(false)
-  const statusMenuRef = useRef<HTMLDivElement | null>(null)
+  const [posts, setPosts] = useState<PostRecord[]>([])
+  const [totalCount, setTotalCount] = useState(0)
+  const [loading, setLoading] = useState(false)
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false)
+  const [pendingDeletePost, setPendingDeletePost] = useState<PostRecord | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [isDetailOpen, setIsDetailOpen] = useState(false)
+  const [detailPost, setDetailPost] = useState<PostRecord | null>(null)
+  const [isDetailLoading, setIsDetailLoading] = useState(false)
+  const [isSuccessOpen, setIsSuccessOpen] = useState(false)
+  const [successMessage, setSuccessMessage] = useState('')
+  const [isErrorOpen, setIsErrorOpen] = useState(false)
+  const [errorMessage, setErrorMessage] = useState('')
+
+  const totalPages = useMemo(() => {
+    return Math.max(1, Math.ceil(totalCount / pageSize))
+  }, [pageSize, totalCount])
+
+  const selectedStatusLabel =
+    statusOptions.find((option) => option.value === pendingStatus)?.label ?? '全部'
 
   const handleSearch = () => {
-    setSearchTitle(pendingTitle)
-    setSearchAuthor(pendingAuthor)
-    setSearchStartDate(pendingStartDate)
-    setSearchEndDate(pendingEndDate)
+    setSearchTitle(pendingTitle.trim())
     setSearchStatus(pendingStatus)
     setCurrentPage(1)
   }
 
   const handleReset = () => {
     setPendingTitle('')
-    setPendingAuthor('')
-    setPendingStartDate('')
-    setPendingEndDate('')
-    setPendingStatus('published')
+    setPendingStatus('')
     setSearchTitle('')
-    setSearchAuthor('')
-    setSearchStartDate('')
-    setSearchEndDate('')
-    setSearchStatus('published')
+    setSearchStatus('')
     setCurrentPage(1)
   }
 
-  const filteredPosts = useMemo(() => {
-    const normalizedTitle = searchTitle.trim().toLowerCase()
-    const normalizedAuthor = searchAuthor.trim().toLowerCase()
+  const fetchPosts = useCallback(async () => {
+    try {
+      setLoading(true)
+      const response = await fetchPostPage({
+        pageNo: currentPage,
+        pageSize,
+        keyword: searchTitle,
+        status: searchStatus ? Number(searchStatus) : undefined,
+      })
 
-    return postList.filter((post) => {
-      const matchesTitle = normalizedTitle
-        ? post.title.toLowerCase().includes(normalizedTitle)
-        : true
-      const matchesAuthor = normalizedAuthor
-        ? post.author.toLowerCase().includes(normalizedAuthor)
-        : true
-      const postDate = post.createdAt
-      const matchesStart = searchStartDate
-        ? postDate >= searchStartDate
-        : true
-      const matchesEnd = searchEndDate ? postDate <= searchEndDate : true
-      const matchesStatus = searchStatus ? post.status === searchStatus : true
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '帖子列表加载失败')
+        setIsErrorOpen(true)
+        return
+      }
 
-      return (
-        matchesTitle &&
-        matchesAuthor &&
-        matchesStart &&
-        matchesEnd &&
-        matchesStatus
-      )
-    })
-  }, [
-    searchAuthor,
-    searchEndDate,
-    searchStartDate,
-    searchTitle,
-    searchStatus,
-  ])
-
-  const totalPages = useMemo(() => {
-    return Math.max(1, Math.ceil(filteredPosts.length / pageSize))
-  }, [filteredPosts.length, pageSize])
-
-  const paginatedPosts = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize
-    const endIndex = startIndex + pageSize
-
-    return filteredPosts.slice(startIndex, endIndex)
-  }, [currentPage, filteredPosts, pageSize])
-
-  const visibleRange = useMemo(() => {
-    if (filteredPosts.length === 0) {
-      return { start: 0, end: 0 }
+      const data = response.data
+      setPosts(data?.records ?? [])
+      setTotalCount(Number(data?.total ?? 0))
+    } catch {
+      setErrorMessage('帖子列表加载失败')
+      setIsErrorOpen(true)
+    } finally {
+      setLoading(false)
     }
-
-    const start = (currentPage - 1) * pageSize + 1
-    const end = Math.min(filteredPosts.length, currentPage * pageSize)
-
-    return { start, end }
-  }, [currentPage, filteredPosts.length, pageSize])
-
-  useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages)
-    }
-  }, [currentPage, totalPages])
-
-  useEffect(() => {
-    setPendingPage(String(currentPage))
-  }, [currentPage])
+  }, [currentPage, pageSize, searchStatus, searchTitle])
 
   useEffect(() => {
     if (!isStatusOpen) {
@@ -238,6 +221,20 @@ function PostsPage() {
     return () => document.removeEventListener('mousedown', handleOutsideClick)
   }, [isStatusOpen])
 
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages)
+    }
+  }, [currentPage, totalPages])
+
+  useEffect(() => {
+    setPendingPage(String(currentPage))
+  }, [currentPage])
+
+  useEffect(() => {
+    void fetchPosts()
+  }, [fetchPosts])
+
   const handlePageSizeChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
     const nextSize = Number(event.target.value)
     setPageSize(nextSize)
@@ -256,9 +253,72 @@ function PostsPage() {
     setCurrentPage(clampedPage)
   }
 
-  const selectedStatusLabel =
-    statusOptions.find((option) => option.value === pendingStatus)
-      ?.label ?? '已发布'
+  const handleOpenDelete = (post: PostRecord) => {
+    setPendingDeletePost(post)
+    setIsDeleteOpen(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!pendingDeletePost || isDeleting) {
+      return
+    }
+
+    try {
+      setIsDeleting(true)
+      const response = await deletePost(String(pendingDeletePost.id))
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '删除失败')
+        setIsErrorOpen(true)
+        return
+      }
+
+      setIsDeleteOpen(false)
+      setPendingDeletePost(null)
+
+      if (posts.length === 1 && currentPage > 1) {
+        setCurrentPage((page) => page - 1)
+      } else {
+        await fetchPosts()
+      }
+
+      setSuccessMessage('帖子删除成功')
+      setIsSuccessOpen(true)
+    } catch {
+      setErrorMessage('删除失败')
+      setIsErrorOpen(true)
+    } finally {
+      setIsDeleting(false)
+    }
+  }
+
+  const handleOpenDetail = async (post: PostRecord) => {
+    try {
+      setIsDetailOpen(true)
+      setIsDetailLoading(true)
+      const response = await fetchPostDetail(String(post.id))
+
+      if (!response.success) {
+        setErrorMessage(response.errorMessage || '详情加载失败')
+        setIsErrorOpen(true)
+        setIsDetailOpen(false)
+        return
+      }
+
+      setDetailPost(response.data)
+    } catch {
+      setErrorMessage('详情加载失败')
+      setIsErrorOpen(true)
+      setIsDetailOpen(false)
+    } finally {
+      setIsDetailLoading(false)
+    }
+  }
+
+  const handleCloseDetail = () => {
+    setIsDetailOpen(false)
+    setDetailPost(null)
+  }
 
   return (
     <DashboardLayout>
@@ -268,7 +328,15 @@ function PostsPage() {
             <div className="card-label">帖子管理</div>
             <div className="posts-title">帖子列表</div>
           </div>
+          <button
+            type="button"
+            className="posts-create-button"
+            onClick={() => navigate('/posts/create')}
+          >
+            发布新帖
+          </button>
         </div>
+
         <div className="posts-filters">
           <div className="filters-row">
             <div className="filter-item filter-title">
@@ -284,19 +352,6 @@ function PostsPage() {
                 onChange={(event) => setPendingTitle(event.target.value)}
               />
             </div>
-            <div className="filter-item filter-author">
-              <label className="filter-label" htmlFor="post-author">
-                作者
-              </label>
-              <input
-                id="post-author"
-                type="text"
-                className="filter-input"
-                placeholder="搜索作者"
-                value={pendingAuthor}
-                onChange={(event) => setPendingAuthor(event.target.value)}
-              />
-            </div>
             <div className="filter-item filter-status">
               <span className="filter-label">状态</span>
               <div className="filter-select" ref={statusMenuRef}>
@@ -307,9 +362,7 @@ function PostsPage() {
                   aria-haspopup="listbox"
                   aria-expanded={isStatusOpen}
                   aria-controls="post-status-listbox"
-                  onClick={() =>
-                    setIsStatusOpen((current) => !current)
-                  }
+                  onClick={() => setIsStatusOpen((current) => !current)}
                 >
                   <span>{selectedStatusLabel}</span>
                   <span className="filter-select-icon" aria-hidden="true">
@@ -325,7 +378,7 @@ function PostsPage() {
                     {statusOptions.map((option) => (
                       <button
                         type="button"
-                        key={option.value}
+                        key={option.value || 'all'}
                         className={`filter-select-option ${
                           pendingStatus === option.value ? 'active' : ''
                         }`}
@@ -361,88 +414,58 @@ function PostsPage() {
                 </button>
               </div>
             </div>
-            <div className="filter-item filter-toggle">
-              <button
-                type="button"
-                className={`filter-toggle-button ${isAdvancedOpen ? 'open' : ''}`}
-                onClick={() => setIsAdvancedOpen((current) => !current)}
-              >
-                高级筛选
-                <span className="filter-toggle-icon" aria-hidden="true">
-                  {isAdvancedOpen ? '▲' : '▼'}
-                </span>
-              </button>
-            </div>
           </div>
-          {isAdvancedOpen && (
-            <div className="filters-row">
-              <div className="filter-item filter-range-item">
-                <label className="filter-label" htmlFor="post-start">
-                  时间范围
-                </label>
-                <div className="filter-range">
-                  <input
-                    id="post-start"
-                    type="date"
-                    className="filter-input"
-                    value={pendingStartDate}
-                    onChange={(event) => setPendingStartDate(event.target.value)}
-                  />
-                  <span className="filter-separator">-</span>
-                  <input
-                    id="post-end"
-                    type="date"
-                    className="filter-input"
-                    value={pendingEndDate}
-                    onChange={(event) => setPendingEndDate(event.target.value)}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
         </div>
-        <div className="posts-toolbar">
-          <button
-            type="button"
-            className="posts-create-button"
-            onClick={() => navigate('/posts/create')}
-          >
-            发布新帖
-          </button>
-        </div>
+
         <div className="posts-table">
           <div className="posts-row posts-head">
             <span>标题</span>
-            <span>内容</span>
+            <span>标识</span>
             <span>作者</span>
-            <span>标签</span>
+            <span>状态</span>
+            <span>发布时间</span>
             <span>浏览量</span>
-            <span>创建时间</span>
             <span>操作</span>
           </div>
-          {paginatedPosts.length === 0 ? (
+          {loading ? (
+            <div className="posts-empty">加载中...</div>
+          ) : posts.length === 0 ? (
             <div className="posts-empty">暂无数据</div>
           ) : (
-            paginatedPosts.map((post) => (
+            posts.map((post) => (
               <div className="posts-row" key={post.id}>
                 <span className="post-title">{post.title}</span>
-                <span className="post-content">
-                  {post.content.length > 10
-                    ? `${post.content.slice(0, 10)}..`
-                    : post.content}
+                <span className="post-content">{post.slug}</span>
+                <span>{post.authorName || '-'}</span>
+                <span>
+                  <span className="post-status-chip">
+                    {statusLabelMap[String(post.status ?? '')] || '-'}
+                  </span>
                 </span>
-                <span>{post.author}</span>
-                <span className="post-tags">{post.tags.join('、')}</span>
-                <span>{post.views}</span>
-                <span>{post.createdAt}</span>
+                <span>{post.publishTime || '-'}</span>
+                <span>{post.viewCount ?? 0}</span>
                 <span className="post-actions">
-                  <button type="button" className="post-action-button">
+                  <button
+                    type="button"
+                    className="post-action-button"
+                    onClick={() => {
+                      void handleOpenDetail(post)
+                    }}
+                  >
                     详情
                   </button>
-                  <button type="button" className="post-action-button">
+                  <button
+                    type="button"
+                    className="post-action-button"
+                    onClick={() => navigate(`/posts/edit/${post.id}`)}
+                  >
                     编辑
                   </button>
-                  <button type="button" className="post-action-button">
+                  <button
+                    type="button"
+                    className="post-action-button post-action-button-danger"
+                    onClick={() => handleOpenDelete(post)}
+                  >
                     删除
                   </button>
                 </span>
@@ -450,9 +473,10 @@ function PostsPage() {
             ))
           )}
         </div>
+
         <div className="posts-pagination">
           <div className="pagination-info">
-            第 {currentPage} / {totalPages} 页 · 共 {filteredPosts.length} 条
+            第 {currentPage} / {totalPages} 页 · 共 {totalCount} 条
           </div>
           <div className="pagination-controls">
             <button
@@ -511,6 +535,105 @@ function PostsPage() {
             </button>
           </div>
         </div>
+
+        <DetailModal
+          isOpen={isDetailOpen}
+          title="帖子详情"
+          cardClassName="posts-detail-modal-card"
+          bodyClassName="posts-detail-modal-body"
+          onClose={handleCloseDetail}
+        >
+          {isDetailLoading ? (
+            <div className="posts-detail-loading">详情加载中...</div>
+          ) : detailPost ? (
+            <div className="posts-detail-grid">
+              <div><strong>ID：</strong>{detailPost.id}</div>
+              <div><strong>标题：</strong>{detailPost.title}</div>
+              <div><strong>slug：</strong>{detailPost.slug}</div>
+              <div><strong>作者：</strong>{detailPost.authorName || '-'}</div>
+              <div><strong>状态：</strong>{statusLabelMap[String(detailPost.status ?? '')] || '-'}</div>
+              <div>
+                <strong>可见性：</strong>
+                {visibilityLabelMap[String(detailPost.visibility ?? '')] || '-'}
+              </div>
+              <div><strong>发布时间：</strong>{detailPost.publishTime || '-'}</div>
+              <div><strong>浏览量：</strong>{detailPost.viewCount ?? 0}</div>
+              <div><strong>精选：</strong>{detailPost.featured === 1 ? '是' : '否'}</div>
+              <div><strong>置顶：</strong>{detailPost.pinned === 1 ? '是' : '否'}</div>
+              <div><strong>分类：</strong>{detailPost.categoryName || detailPost.categoryId || '-'}</div>
+              <div><strong>标签：</strong>{parseTagText(detailPost)}</div>
+              <div className="posts-detail-section">
+                <strong>摘要：</strong>
+                <div>{detailPost.summary || '-'}</div>
+              </div>
+              <div className="posts-detail-section">
+                <strong>封面：</strong>
+                {detailPost.coverUrl ? (
+                  <a
+                    href={detailPost.coverUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="posts-detail-cover-link"
+                  >
+                    <img
+                      src={detailPost.coverUrl}
+                      alt="帖子封面"
+                      className="posts-detail-cover-image"
+                    />
+                  </a>
+                ) : (
+                  <div>-</div>
+                )}
+              </div>
+              <div className="posts-detail-section">
+                <strong>正文：</strong>
+                {detailPost.content || detailPost.renderedContent ? (
+                  <div
+                    className="posts-detail-article"
+                    dangerouslySetInnerHTML={{
+                      __html: detailPost.content || detailPost.renderedContent || '',
+                    }}
+                  />
+                ) : (
+                  <div>-</div>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </DetailModal>
+
+        <ConfirmDialog
+          isOpen={isDeleteOpen}
+          title="删除帖子"
+          message={`确认删除帖子「${pendingDeletePost?.title || ''}」吗？`}
+          description="删除后不可恢复，请谨慎操作。"
+          confirmLabel={isDeleting ? '删除中...' : '确认删除'}
+          cancelLabel="取消"
+          confirmTone="danger"
+          onCancel={() => {
+            if (isDeleting) {
+              return
+            }
+            setIsDeleteOpen(false)
+            setPendingDeletePost(null)
+          }}
+          onConfirm={() => {
+            void handleConfirmDelete()
+          }}
+        />
+
+        <ToastNotice
+          isOpen={isSuccessOpen}
+          message={successMessage}
+          tone="success"
+          onClose={() => setIsSuccessOpen(false)}
+        />
+        <ToastNotice
+          isOpen={isErrorOpen}
+          message={errorMessage}
+          tone="error"
+          onClose={() => setIsErrorOpen(false)}
+        />
       </section>
     </DashboardLayout>
   )
