@@ -526,7 +526,7 @@ const HomePage = (): JSX.Element => {
               onClick={toggleDrawer}
               aria-label='打开帖子导航'
             >
-              列表
+              <span className={styles['menu-trigger-icon']} aria-hidden='true' />
             </button>
             <Link href='/profile' className={styles['avatar-link']} aria-label='进入个人资料'>
               <span className={styles['avatar-image']}>GL</span>
