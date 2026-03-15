@@ -1,45 +1,56 @@
-.app-html {
-  --background: #ffffff;
-  --foreground: #171717;
+:root {
+  --doc-primary: #2563eb;
+  --doc-gray-50: #fafafa;
+  --doc-gray-100: #f4f4f5;
+  --doc-gray-200: #e4e4e7;
+  --doc-gray-300: #d4d4d8;
+  --doc-gray-400: #a1a1aa;
+  --doc-gray-500: #71717a;
+  --doc-gray-700: #3f3f46;
+  --doc-gray-900: #18181b;
+  --doc-space-4: 4px;
+  --doc-space-8: 8px;
+  --doc-space-12: 12px;
+  --doc-space-16: 16px;
+  --doc-space-24: 24px;
+  --doc-space-32: 32px;
+  --doc-space-40: 40px;
+  --doc-space-48: 48px;
+  --doc-bg: #fafafa;
+  --doc-surface: #ffffff;
+  --doc-text: #18181b;
+  --doc-border: #e4e4e7;
 }
 
-@media (prefers-color-scheme: dark) {
-  .app-html {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+[data-theme='dark'] {
+  --doc-bg: #18181b;
+  --doc-surface: #18181b;
+  --doc-text: #e4e4e7;
+  --doc-border: #27272a;
+  --doc-gray-100: #27272a;
+  --doc-gray-500: #a1a1aa;
+  --doc-gray-700: #d4d4d8;
+  --doc-gray-900: #e4e4e7;
 }
 
-.app-html,
-.app-body {
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
   max-width: 100vw;
   overflow-x: hidden;
 }
 
-.app-body {
-  color: var(--foreground);
-  background: var(--background);
+html {
+  scroll-behavior: smooth;
 }
 
-.app-body * {
-  box-sizing: border-box;
-  padding: 0;
-  margin: 0;
-}
-
-.img-dark {
-  display: none;
-}
-
-@media (prefers-color-scheme: dark) {
-  .app-html {
-    color-scheme: dark;
-  }
-
-  .img-light {
-    display: none;
-  }
-  .img-dark {
-    display: unset;
-  }
+body {
+  font-family: Inter, system-ui, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: var(--doc-bg);
+  color: var(--doc-text);
 }

@@ -191,7 +191,7 @@ function LoginPage() {
       try {
         setIsSubmitting(true)
         const tokens = await codeLogin({
-          username: email,
+          email: email,
           code,
         })
         persistTokens(tokens)

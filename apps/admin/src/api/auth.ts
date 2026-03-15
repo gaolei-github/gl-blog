@@ -17,7 +17,7 @@ type LoginPayload = {
 }
 
 type CodeLoginPayload = {
-  username: string
+  email: string
   code: string
 }
 
