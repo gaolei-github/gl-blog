@@ -58,14 +58,14 @@ type FrontPostResponse = {
 type PostBlock = {
   key: string
   type: 'heading' | 'paragraph'
-  level: 2 | 3
+  level: 1 | 2 | 3
   title: string
   anchorId: string
 }
 
 type TocItem = {
   id: string
-  level: 2 | 3
+  level: 1 | 2 | 3
   title: string
 }
 
@@ -263,7 +263,7 @@ const parsePostContent = (content: string) => {
     const headingMark = headingMatch[1] ?? '#'
     const headingTitle = headingMatch[2] ?? ''
     const rawLevel = headingMark.length
-    const level: 2 | 3 = rawLevel >= 3 ? 3 : 2
+    const level: 1 | 2 | 3 = rawLevel <= 1 ? 1 : rawLevel === 2 ? 2 : 3
     const title = headingTitle.trim()
     headingIndex += 1
 
@@ -310,13 +310,13 @@ const parseHtmlContent = (content: string) => {
 
   const htmlContent = content.replace(/<(h[1-6])(\s[^>]*)?>([\s\S]*?)<\/\1>/gi, (match, tagName, attrs = '', innerHtml) => {
     const numericLevel = Number(String(tagName).slice(1))
-    if (numericLevel !== 2 && numericLevel !== 3) {
+    if (numericLevel !== 1 && numericLevel !== 2 && numericLevel !== 3) {
       return match
     }
 
     headingIndex += 1
     const anchorId = `section-${headingIndex}`
-    const level: 2 | 3 = numericLevel === 2 ? 2 : 3
+    const level: 1 | 2 | 3 = numericLevel === 1 ? 1 : numericLevel === 2 ? 2 : 3
     const title = stripHtmlTag(String(innerHtml)) || `章节 ${headingIndex}`
     tocList.push({ id: anchorId, level, title })
 
@@ -666,7 +666,11 @@ const HomePage = (): JSX.Element => {
                   <div className={styles['post-content-body']}>
                     {postBlockList.map((item) => (
                       item.type === 'heading' ? (
-                        item.level === 2 ? (
+                        item.level === 1 ? (
+                          <h1 key={item.key} id={item.anchorId}>
+                            {item.title}
+                          </h1>
+                        ) : item.level === 2 ? (
                           <h2 key={item.key} id={item.anchorId}>
                             {item.title}
                           </h2>
