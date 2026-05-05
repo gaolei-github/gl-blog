@@ -39,7 +39,7 @@ type HeaderCategory = {
 }
 
 type FrontPost = {
-  id: number
+  id: string | number
   title: string
   summary: string
   content: string
@@ -53,6 +53,29 @@ type FrontPostResponse = {
   errorCode: string | null
   errorMessage: string | null
   data: FrontPost[]
+}
+
+type SearchPost = {
+  id: string | number
+  title: string
+  summary: string
+  categoryId?: string | number | null
+  categoryName?: string
+  categorySlug?: string
+}
+
+type SearchPageData = {
+  pageNo: number
+  pageSize: number
+  total: number
+  records: SearchPost[]
+}
+
+type SearchPostResponse = {
+  success: boolean
+  errorCode: string | null
+  errorMessage: string | null
+  data: SearchPageData | null
 }
 
 type PostBlock = {
@@ -76,10 +99,17 @@ const applyTheme = (themeMode: ThemeMode) => {
   document.documentElement.setAttribute('data-theme', themeMode)
 }
 
-const requestJson = async <T,>(path: string): Promise<T> => {
-  const response = await fetch(`${API_BASE_URL}${path}`)
+const requestJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
+  const response = await fetch(`${API_BASE_URL}${path}`, init)
   const payload = (await response.json()) as T
   return payload
+}
+
+const toIdKey = (id: string | number | null | undefined) => {
+  if (id === null || id === undefined) {
+    return ''
+  }
+  return String(id)
 }
 
 const useTheme = () => {
@@ -191,7 +221,7 @@ const useHeaderCategories = () => {
 }
 
 const useCategoryPostMap = (currentTopCategory: HeaderCategory | null) => {
-  const [categoryPostMap, setCategoryPostMap] = useState<Record<number, FrontPost[]>>({})
+  const [categoryPostMap, setCategoryPostMap] = useState<Record<string, FrontPost[]>>({})
   const [isLoading, setIsLoading] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
 
@@ -221,9 +251,9 @@ const useCategoryPostMap = (currentTopCategory: HeaderCategory | null) => {
           })
         )
 
-        const nextCategoryPostMap: Record<number, FrontPost[]> = {}
+        const nextCategoryPostMap: Record<string, FrontPost[]> = {}
         resultList.forEach((item) => {
-          nextCategoryPostMap[item.id] = item.postList
+          nextCategoryPostMap[toIdKey(item.id)] = item.postList
         })
 
         setCategoryPostMap(nextCategoryPostMap)
@@ -383,10 +413,22 @@ const HomePage = (): JSX.Element => {
 
   const [selectedTopCategoryId, setSelectedTopCategoryId] = useState<number | null>(null)
   const [selectedSubCategoryId, setSelectedSubCategoryId] = useState<number | null>(null)
-  const [selectedPostId, setSelectedPostId] = useState<number | null>(null)
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(null)
   const [collapsedCategoryMap, setCollapsedCategoryMap] = useState<Record<number, boolean>>({})
   const [searchKeyword, setSearchKeyword] = useState('')
+  const [searchResultList, setSearchResultList] = useState<SearchPost[]>([])
+  const [isSearchPanelOpen, setIsSearchPanelOpen] = useState(false)
+  const [activeSearchResultIndex, setActiveSearchResultIndex] = useState(-1)
+  const [isSearchSuggestLoading, setIsSearchSuggestLoading] = useState(false)
+  const [isSearchSubmitting, setIsSearchSubmitting] = useState(false)
+  const [isSearchEmpty, setIsSearchEmpty] = useState(false)
+  const [searchErrorMessage, setSearchErrorMessage] = useState('')
+  const [searchSuggestErrorMessage, setSearchSuggestErrorMessage] = useState('')
   const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const searchPanelRef = useRef<HTMLDivElement | null>(null)
+  const categoryPostCacheRef = useRef<Record<string, FrontPost[]>>({})
+  const postCategoryCacheRef = useRef<Record<string, string>>({})
+  const searchRequestSequenceRef = useRef(0)
 
   const currentTopCategory = useMemo(() => {
     return headerCategoryList.find((item) => item.id === selectedTopCategoryId) ?? null
@@ -402,34 +444,14 @@ const HomePage = (): JSX.Element => {
     return currentTopCategory.children.length > 0 ? currentTopCategory.children : [currentTopCategory]
   }, [currentTopCategory])
 
-  const filteredCategoryPostMap = useMemo(() => {
-    const keyword = searchKeyword.trim().toLowerCase()
-
-    if (!keyword) {
-      return categoryPostMap
-    }
-
-    const nextMap: Record<number, FrontPost[]> = {}
-    Object.keys(categoryPostMap).forEach((categoryId) => {
-      const numericCategoryId = Number(categoryId)
-      const postList = categoryPostMap[numericCategoryId] ?? []
-
-      nextMap[numericCategoryId] = postList.filter((item) => {
-        const title = item.title?.toLowerCase() ?? ''
-        const summary = item.summary?.toLowerCase() ?? ''
-        return title.includes(keyword) || summary.includes(keyword)
-      })
-    })
-
-    return nextMap
-  }, [categoryPostMap, searchKeyword])
+  const filteredCategoryPostMap = useMemo(() => categoryPostMap, [categoryPostMap])
 
   const flatPostList = useMemo(() => {
-    return sidebarCategoryList.flatMap((item) => filteredCategoryPostMap[item.id] ?? [])
+    return sidebarCategoryList.flatMap((item) => filteredCategoryPostMap[toIdKey(item.id)] ?? [])
   }, [filteredCategoryPostMap, sidebarCategoryList])
 
   const selectedPost = useMemo(
-    () => flatPostList.find((item) => item.id === selectedPostId) ?? flatPostList[0] ?? null,
+    () => flatPostList.find((item) => toIdKey(item.id) === selectedPostId) ?? flatPostList[0] ?? null,
     [flatPostList, selectedPostId]
   )
 
@@ -452,8 +474,371 @@ const HomePage = (): JSX.Element => {
 
   const activeHeadingId = useActiveHeading(tocList)
 
+  const clearSearchState = () => {
+    setIsSearchEmpty(false)
+    setSearchErrorMessage('')
+    setSearchSuggestErrorMessage('')
+    setIsSearchPanelOpen(false)
+    setActiveSearchResultIndex(-1)
+  }
+
+  const clearSearchMessage = () => {
+    setSearchErrorMessage('')
+    setSearchSuggestErrorMessage('')
+  }
+
+  const applySearchEmptyState = () => {
+    setIsSearchEmpty(true)
+    setIsSearchPanelOpen(false)
+    setActiveSearchResultIndex(-1)
+    setSelectedTopCategoryId(null)
+    setSelectedSubCategoryId(null)
+    setSelectedPostId(null)
+
+    const nextCollapsedCategoryMap: Record<number, boolean> = {}
+    headerCategoryList.forEach((topCategory) => {
+      if (topCategory.children.length > 0) {
+        topCategory.children.forEach((childItem) => {
+          nextCollapsedCategoryMap[childItem.id] = true
+        })
+        return
+      }
+
+      nextCollapsedCategoryMap[topCategory.id] = true
+    })
+
+    setCollapsedCategoryMap(nextCollapsedCategoryMap)
+  }
+
+  const findCategorySelectionByCategoryId = (targetCategoryId: string) => {
+    for (const topCategory of headerCategoryList) {
+      if (toIdKey(topCategory.id) === targetCategoryId) {
+        return {
+          topCategoryId: topCategory.id,
+          subCategoryId: topCategory.children[0]?.id ?? topCategory.id,
+        }
+      }
+
+      const matchedSubCategory = topCategory.children.find((childItem) => toIdKey(childItem.id) === targetCategoryId)
+      if (matchedSubCategory) {
+        return {
+          topCategoryId: topCategory.id,
+          subCategoryId: matchedSubCategory.id,
+        }
+      }
+    }
+
+    return null
+  }
+
+  const findCategorySelectionBySearchPost = (postItem: SearchPost) => {
+    const categoryId = toIdKey(postItem.categoryId)
+    if (categoryId) {
+      const matchedCategorySelection = findCategorySelectionByCategoryId(categoryId)
+      if (matchedCategorySelection) {
+        return matchedCategorySelection
+      }
+    }
+
+    const categorySlug = postItem.categorySlug?.trim()
+    if (categorySlug) {
+      for (const topCategory of headerCategoryList) {
+        if (topCategory.slug === categorySlug) {
+          return {
+            topCategoryId: topCategory.id,
+            subCategoryId: topCategory.children[0]?.id ?? topCategory.id,
+          }
+        }
+
+        const matchedSubCategory = topCategory.children.find((childItem) => childItem.slug === categorySlug)
+        if (matchedSubCategory) {
+          return {
+            topCategoryId: topCategory.id,
+            subCategoryId: matchedSubCategory.id,
+          }
+        }
+      }
+    }
+
+    const categoryName = postItem.categoryName?.trim()
+    if (categoryName) {
+      for (const topCategory of headerCategoryList) {
+        if (topCategory.name === categoryName) {
+          return {
+            topCategoryId: topCategory.id,
+            subCategoryId: topCategory.children[0]?.id ?? topCategory.id,
+          }
+        }
+
+        const matchedSubCategory = topCategory.children.find((childItem) => childItem.name === categoryName)
+        if (matchedSubCategory) {
+          return {
+            topCategoryId: topCategory.id,
+            subCategoryId: matchedSubCategory.id,
+          }
+        }
+      }
+    }
+
+    return null
+  }
+
+  const findCachedCategoryIdByPostId = (postId: string) => {
+    const cachedCategoryIdList = Object.keys(categoryPostCacheRef.current)
+    for (const categoryId of cachedCategoryIdList) {
+      const postList = categoryPostCacheRef.current[categoryId] ?? []
+      if (postList.some((item) => toIdKey(item.id) === postId)) {
+        return categoryId
+      }
+    }
+
+    return ''
+  }
+
+  const resolveCategorySelectionByPostId = async (postId: string) => {
+    if (!postId) {
+      return null
+    }
+
+    const cachedCategoryIdByPostId = postCategoryCacheRef.current[postId]
+    if (cachedCategoryIdByPostId) {
+      const cachedSelection = findCategorySelectionByCategoryId(cachedCategoryIdByPostId)
+      if (cachedSelection) {
+        return cachedSelection
+      }
+    }
+
+    const categoryIdList = headerCategoryList.flatMap((topCategory) =>
+      topCategory.children.length > 0 ? topCategory.children.map((childItem) => toIdKey(childItem.id)) : [toIdKey(topCategory.id)]
+    )
+
+    if (categoryIdList.length === 0) {
+      return null
+    }
+
+    const cachedCategoryId = findCachedCategoryIdByPostId(postId)
+    if (cachedCategoryId) {
+      postCategoryCacheRef.current[postId] = cachedCategoryId
+      return findCategorySelectionByCategoryId(cachedCategoryId)
+    }
+
+    for (const categoryId of categoryIdList) {
+      if (categoryPostCacheRef.current[categoryId]) {
+        continue
+      }
+
+      const result = await requestJson<FrontPostResponse>(`/app/front/post?categoryId=${categoryId}`)
+      if (!result.success) {
+        categoryPostCacheRef.current[categoryId] = []
+        continue
+      }
+
+      categoryPostCacheRef.current[categoryId] = result.data
+
+      const hasMatchedPost = result.data.some((item) => toIdKey(item.id) === postId)
+      if (hasMatchedPost) {
+        postCategoryCacheRef.current[postId] = categoryId
+        return findCategorySelectionByCategoryId(categoryId)
+      }
+    }
+
+    return null
+  }
+
+  const requestSearchPostList = async (keyword: string) => {
+    const result = await requestJson<SearchPostResponse>('/app/front/search', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        pageNo: 1,
+        pageSize: 10,
+        keyword,
+      }),
+    })
+
+    if (!result.success) {
+      return {
+        success: false,
+        errorMessage: result.errorMessage ?? '搜索失败，请稍后重试',
+        records: [] as SearchPost[],
+      }
+    }
+
+    return {
+      success: true,
+      errorMessage: '',
+      records: result.data?.records ?? [],
+    }
+  }
+
+  const applySearchSelection = async (selectedSearchPost: SearchPost) => {
+    let matchedCategorySelection = findCategorySelectionBySearchPost(selectedSearchPost)
+    const searchPostId = toIdKey(selectedSearchPost.id)
+    if (!matchedCategorySelection && searchPostId) {
+      matchedCategorySelection = await resolveCategorySelectionByPostId(searchPostId)
+    }
+
+    if (!matchedCategorySelection) {
+      applySearchEmptyState()
+      return false
+    }
+
+    setIsSearchEmpty(false)
+    setSelectedTopCategoryId(matchedCategorySelection.topCategoryId)
+    setSelectedSubCategoryId(matchedCategorySelection.subCategoryId)
+    setCollapsedCategoryMap((prev) => ({
+      ...prev,
+      [matchedCategorySelection.subCategoryId]: false,
+    }))
+    setSelectedPostId(searchPostId || null)
+    return true
+  }
+
+  const submitSearchByPost = async (selectedSearchPost: SearchPost) => {
+    clearSearchState()
+
+    try {
+      setIsSearchSubmitting(true)
+      await applySearchSelection(selectedSearchPost)
+    } catch {
+      setIsSearchEmpty(true)
+      setSearchErrorMessage('搜索失败，请检查服务端接口')
+    } finally {
+      setIsSearchSubmitting(false)
+    }
+  }
+
+  const onSearch = async () => {
+    const keyword = searchKeyword.trim()
+    clearSearchState()
+
+    if (!keyword) {
+      return
+    }
+
+    const activeResult = searchResultList[activeSearchResultIndex]
+    if (isSearchPanelOpen && activeResult) {
+      await submitSearchByPost(activeResult)
+      return
+    }
+
+    const firstResult = searchResultList[0]
+    if (firstResult) {
+      await submitSearchByPost(firstResult)
+      return
+    }
+
+    try {
+      setIsSearchSubmitting(true)
+      const searchResult = await requestSearchPostList(keyword)
+      if (!searchResult.success) {
+        setIsSearchEmpty(true)
+        setSearchErrorMessage(searchResult.errorMessage)
+        return
+      }
+
+      const firstMatchedPost = searchResult.records[0]
+      if (!firstMatchedPost) {
+        applySearchEmptyState()
+        return
+      }
+
+      await applySearchSelection(firstMatchedPost)
+    } catch {
+      setIsSearchEmpty(true)
+      setSearchErrorMessage('搜索失败，请检查服务端接口')
+    } finally {
+      setIsSearchSubmitting(false)
+      setIsSearchPanelOpen(false)
+      setActiveSearchResultIndex(-1)
+    }
+  }
+
   useEffect(() => {
-    if (headerCategoryList.length === 0 || selectedTopCategoryId) {
+    const keyword = searchKeyword.trim()
+    if (!keyword) {
+      setSearchResultList([])
+      setIsSearchPanelOpen(false)
+      setActiveSearchResultIndex(-1)
+      setIsSearchSuggestLoading(false)
+      setSearchSuggestErrorMessage('')
+      return
+    }
+
+    const nextRequestSequence = searchRequestSequenceRef.current + 1
+    searchRequestSequenceRef.current = nextRequestSequence
+    const timerId = window.setTimeout(async () => {
+      try {
+        setIsSearchSuggestLoading(true)
+        setSearchSuggestErrorMessage('')
+
+        const searchResult = await requestSearchPostList(keyword)
+        if (searchRequestSequenceRef.current !== nextRequestSequence) {
+          return
+        }
+
+        if (!searchResult.success) {
+          setSearchResultList([])
+          setIsSearchPanelOpen(true)
+          setActiveSearchResultIndex(-1)
+          setSearchSuggestErrorMessage(searchResult.errorMessage)
+          return
+        }
+
+        setSearchResultList(searchResult.records)
+        setIsSearchPanelOpen(true)
+        setActiveSearchResultIndex(searchResult.records.length > 0 ? 0 : -1)
+      } catch {
+        if (searchRequestSequenceRef.current !== nextRequestSequence) {
+          return
+        }
+        setSearchResultList([])
+        setIsSearchPanelOpen(true)
+        setActiveSearchResultIndex(-1)
+        setSearchSuggestErrorMessage('搜索建议加载失败')
+      } finally {
+        if (searchRequestSequenceRef.current === nextRequestSequence) {
+          setIsSearchSuggestLoading(false)
+        }
+      }
+    }, 260)
+
+    return () => {
+      window.clearTimeout(timerId)
+    }
+  }, [searchKeyword])
+
+  useEffect(() => {
+    const onWindowPointerDown = (event: MouseEvent) => {
+      const panelElement = searchPanelRef.current
+      if (!panelElement) {
+        return
+      }
+
+      if (panelElement.contains(event.target as Node)) {
+        return
+      }
+
+      setIsSearchPanelOpen(false)
+      setActiveSearchResultIndex(-1)
+    }
+
+    window.addEventListener('mousedown', onWindowPointerDown)
+    return () => {
+      window.removeEventListener('mousedown', onWindowPointerDown)
+    }
+  }, [])
+
+  useEffect(() => {
+    Object.keys(categoryPostMap).forEach((categoryId) => {
+      categoryPostCacheRef.current[categoryId] = categoryPostMap[categoryId] ?? []
+    })
+  }, [categoryPostMap])
+
+  useEffect(() => {
+    if (isSearchEmpty || headerCategoryList.length === 0 || selectedTopCategoryId) {
       return
     }
 
@@ -464,7 +849,7 @@ const HomePage = (): JSX.Element => {
 
     setSelectedTopCategoryId(defaultCategory.id)
     setSelectedSubCategoryId(defaultCategory.children[0]?.id ?? defaultCategory.id)
-  }, [headerCategoryList, selectedTopCategoryId])
+  }, [headerCategoryList, isSearchEmpty, selectedTopCategoryId])
 
   useEffect(() => {
     if (flatPostList.length === 0) {
@@ -473,11 +858,11 @@ const HomePage = (): JSX.Element => {
     }
 
     setSelectedPostId((prev) => {
-      if (flatPostList.some((item) => item.id === prev)) {
+      if (flatPostList.some((item) => toIdKey(item.id) === prev)) {
         return prev
       }
       const firstPost = flatPostList[0]
-      return firstPost ? firstPost.id : null
+      return firstPost ? toIdKey(firstPost.id) : null
     })
   }, [flatPostList])
 
@@ -501,17 +886,17 @@ const HomePage = (): JSX.Element => {
       return
     }
 
-    const selectedSubPostList = filteredCategoryPostMap[selectedSubCategoryId] ?? []
+    const selectedSubPostList = filteredCategoryPostMap[toIdKey(selectedSubCategoryId)] ?? []
     if (selectedSubPostList.length === 0) {
       return
     }
 
     setSelectedPostId((prev) => {
-      if (selectedSubPostList.some((item) => item.id === prev)) {
+      if (selectedSubPostList.some((item) => toIdKey(item.id) === prev)) {
         return prev
       }
       const firstPost = selectedSubPostList[0]
-      return firstPost ? firstPost.id : null
+      return firstPost ? toIdKey(firstPost.id) : null
     })
   }, [filteredCategoryPostMap, selectedSubCategoryId])
 
@@ -538,6 +923,7 @@ const HomePage = (): JSX.Element => {
                     type='button'
                     className={`${styles['nav-link']} ${selectedTopCategoryId === item.id ? styles['nav-link-active'] : ''}`}
                     onClick={() => {
+                      clearSearchState()
                       setSelectedTopCategoryId(item.id)
                       setSelectedSubCategoryId(item.children[0]?.id ?? item.id)
                     }}
@@ -552,6 +938,7 @@ const HomePage = (): JSX.Element => {
                             type='button'
                             className={`${styles['nav-children-link']} ${selectedSubCategoryId === childItem.id ? styles['nav-children-link-active'] : ''}`}
                             onClick={() => {
+                              clearSearchState()
                               setSelectedTopCategoryId(item.id)
                               setSelectedSubCategoryId(childItem.id)
                             }}
@@ -568,25 +955,108 @@ const HomePage = (): JSX.Element => {
           </div>
 
           <div className={styles['header-right']}>
-            <label className={styles['search-wrap']}>
-              <span className={styles['search-icon']} aria-hidden='true'>
-                ⌕
-              </span>
-              <input
-                ref={searchInputRef}
-                className={styles['search-input']}
-                type='search'
-                placeholder='搜索文章'
-                value={searchKeyword}
-                onChange={(event) => setSearchKeyword(event.target.value)}
-              />
-            </label>
+            <div className={styles['search-box']} ref={searchPanelRef}>
+              <label className={styles['search-wrap']}>
+                <span className={styles['search-icon']} aria-hidden='true'>
+                  ⌕
+                </span>
+                <input
+                  ref={searchInputRef}
+                  className={styles['search-input']}
+                  type='search'
+                  placeholder='搜索文章'
+                  value={searchKeyword}
+                  onFocus={() => {
+                    if (!searchKeyword.trim()) {
+                      return
+                    }
+                    setIsSearchPanelOpen(true)
+                  }}
+                  onChange={(event) => {
+                    clearSearchMessage()
+                    setSearchKeyword(event.target.value)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'ArrowDown') {
+                      event.preventDefault()
+                      setIsSearchPanelOpen(true)
+                      setActiveSearchResultIndex((prev) => {
+                        if (searchResultList.length === 0) {
+                          return -1
+                        }
+                        return prev < searchResultList.length - 1 ? prev + 1 : 0
+                      })
+                      return
+                    }
+
+                    if (event.key === 'ArrowUp') {
+                      event.preventDefault()
+                      setIsSearchPanelOpen(true)
+                      setActiveSearchResultIndex((prev) => {
+                        if (searchResultList.length === 0) {
+                          return -1
+                        }
+                        return prev > 0 ? prev - 1 : searchResultList.length - 1
+                      })
+                      return
+                    }
+
+                    if (event.key === 'Escape') {
+                      setIsSearchPanelOpen(false)
+                      setActiveSearchResultIndex(-1)
+                      return
+                    }
+
+                    if (event.key !== 'Enter') {
+                      return
+                    }
+
+                    event.preventDefault()
+                    onSearch()
+                  }}
+                />
+              </label>
+
+              {isSearchPanelOpen ? (
+                <section className={styles['search-panel']}>
+                  {isSearchSuggestLoading ? <p className={styles['search-panel-tip']}>搜索中...</p> : null}
+                  {!isSearchSuggestLoading && searchSuggestErrorMessage ? (
+                    <p className={styles['search-panel-tip']}>{searchSuggestErrorMessage}</p>
+                  ) : null}
+                  {!isSearchSuggestLoading && !searchSuggestErrorMessage && searchResultList.length === 0 ? (
+                    <p className={styles['search-panel-tip']}>无相关内容</p>
+                  ) : null}
+                  {!isSearchSuggestLoading && !searchSuggestErrorMessage && searchResultList.length > 0 ? (
+                    <ul className={styles['search-result-list']}>
+                      {searchResultList.map((item, index) => (
+                        <li key={toIdKey(item.id)}>
+                          <button
+                            type='button'
+                            className={`${styles['search-result-item']} ${index === activeSearchResultIndex ? styles['search-result-item-active'] : ''}`}
+                            onMouseEnter={() => setActiveSearchResultIndex(index)}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => {
+                              submitSearchByPost(item)
+                            }}
+                          >
+                            <span className={styles['search-result-title']}>{item.title}</span>
+                            <span className={styles['search-result-meta']}>
+                              {item.categoryName?.trim() ? item.categoryName : '未匹配分类'}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </section>
+              ) : null}
+            </div>
             <button
               type='button'
               className={styles['search-action']}
-              onClick={() => searchInputRef.current?.focus()}
+              onClick={onSearch}
             >
-              搜索
+              {isSearchSubmitting ? '定位中...' : '搜索'}
             </button>
           </div>
         </div>
@@ -604,6 +1074,7 @@ const HomePage = (): JSX.Element => {
                   type='button'
                   className={styles['sub-category-head']}
                   onClick={() => {
+                    clearSearchState()
                     setSelectedSubCategoryId(item.id)
                     setCollapsedCategoryMap((prev) => ({
                       ...prev,
@@ -621,17 +1092,18 @@ const HomePage = (): JSX.Element => {
                 <ul
                   className={`${styles['post-sidebar-list']} ${collapsedCategoryMap[item.id] ? styles['post-sidebar-list-collapsed'] : ''}`}
                 >
-                  {(filteredCategoryPostMap[item.id] ?? []).map((postItem) => (
+                  {(filteredCategoryPostMap[toIdKey(item.id)] ?? []).map((postItem) => (
                     <li
                       key={postItem.id}
-                      className={`${styles['post-sidebar-list-item']} ${selectedPost?.id === postItem.id ? styles['post-sidebar-list-item-active'] : ''}`}
+                      className={`${styles['post-sidebar-list-item']} ${selectedPostId === toIdKey(postItem.id) ? styles['post-sidebar-list-item-active'] : ''}`}
                     >
                       <button
                         type='button'
-                        className={`${styles['post-sidebar-item']} ${selectedPost?.id === postItem.id ? styles['post-sidebar-item-active'] : ''}`}
+                        className={`${styles['post-sidebar-item']} ${selectedPostId === toIdKey(postItem.id) ? styles['post-sidebar-item-active'] : ''}`}
                         onClick={() => {
+                          clearSearchState()
                           setSelectedSubCategoryId(item.id)
-                          setSelectedPostId(postItem.id)
+                          setSelectedPostId(toIdKey(postItem.id))
                           closeDrawer()
                         }}
                       >
@@ -647,7 +1119,7 @@ const HomePage = (): JSX.Element => {
 
         <main className={styles['doc-main']}>
           <article className={styles['doc-article']}>
-            {isCategoryLoading || isPostLoading ? <p className={styles['post-empty']}>加载中...</p> : null}
+            {isCategoryLoading || isPostLoading || isSearchSubmitting ? <p className={styles['post-empty']}>加载中...</p> : null}
 
             {!isCategoryLoading && categoryErrorMessage ? (
               <p className={styles['post-error']}>{categoryErrorMessage}</p>
@@ -655,7 +1127,7 @@ const HomePage = (): JSX.Element => {
 
             {!isPostLoading && postErrorMessage ? <p className={styles['post-error']}>{postErrorMessage}</p> : null}
 
-            {!isCategoryLoading && !categoryErrorMessage && selectedPost ? (
+            {!isCategoryLoading && !categoryErrorMessage && !isSearchEmpty && selectedPost ? (
               <section className={styles['post-content-section']}>
                 <h1 className={styles['post-content-title']}>{selectedPost.title}</h1>
                 <p className={styles['post-content-summary']}>{selectedPost.summary}</p>
@@ -690,7 +1162,15 @@ const HomePage = (): JSX.Element => {
               </section>
             ) : null}
 
-            {!isCategoryLoading && !isPostLoading && !categoryErrorMessage && !selectedPost ? (
+            {!isCategoryLoading && !isPostLoading && !isSearchSubmitting && !categoryErrorMessage && searchErrorMessage ? (
+              <p className={styles['post-error']}>{searchErrorMessage}</p>
+            ) : null}
+
+            {!isCategoryLoading && !isPostLoading && !isSearchSubmitting && !categoryErrorMessage && isSearchEmpty ? (
+              <p className={styles['post-empty']}>无相关内容</p>
+            ) : null}
+
+            {!isCategoryLoading && !isPostLoading && !isSearchSubmitting && !categoryErrorMessage && !isSearchEmpty && !selectedPost ? (
               <p className={styles['post-empty']}>当前分类暂无文章</p>
             ) : null}
           </article>
@@ -745,6 +1225,7 @@ const HomePage = (): JSX.Element => {
                 type='button'
                 className={styles['sub-category-head']}
                 onClick={() => {
+                  clearSearchState()
                   setSelectedSubCategoryId(item.id)
                   setCollapsedCategoryMap((prev) => ({
                     ...prev,
@@ -761,17 +1242,18 @@ const HomePage = (): JSX.Element => {
               <ul
                 className={`${styles['post-sidebar-list']} ${collapsedCategoryMap[item.id] ? styles['post-sidebar-list-collapsed'] : ''}`}
               >
-                {(filteredCategoryPostMap[item.id] ?? []).map((postItem) => (
+                {(filteredCategoryPostMap[toIdKey(item.id)] ?? []).map((postItem) => (
                   <li
                     key={`drawer-${postItem.id}`}
-                    className={`${styles['post-sidebar-list-item']} ${selectedPost?.id === postItem.id ? styles['post-sidebar-list-item-active'] : ''}`}
+                    className={`${styles['post-sidebar-list-item']} ${selectedPostId === toIdKey(postItem.id) ? styles['post-sidebar-list-item-active'] : ''}`}
                   >
                     <button
                       type='button'
-                      className={`${styles['post-sidebar-item']} ${selectedPost?.id === postItem.id ? styles['post-sidebar-item-active'] : ''}`}
+                      className={`${styles['post-sidebar-item']} ${selectedPostId === toIdKey(postItem.id) ? styles['post-sidebar-item-active'] : ''}`}
                       onClick={() => {
+                        clearSearchState()
                         setSelectedSubCategoryId(item.id)
-                        setSelectedPostId(postItem.id)
+                        setSelectedPostId(toIdKey(postItem.id))
                         closeDrawer()
                       }}
                     >
