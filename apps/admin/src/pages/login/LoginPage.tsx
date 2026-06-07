@@ -4,10 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import {
   CODE_COUNTDOWN_SECONDS,
   CODE_HINT_DEFAULT,
-  ACCESS_TOKEN_KEY,
-  EXPIRES_IN_KEY,
   REMEMBER_EMAIL_KEY,
-  REFRESH_TOKEN_KEY,
 } from '../../constants/auth'
 import { hasAuthToken, saveAuthTokens } from '../../utils/auth'
 import {

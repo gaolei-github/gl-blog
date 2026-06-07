@@ -132,6 +132,10 @@
   box-shadow: 0 10px 20px rgba(94, 59, 31, 0.2);
 }
 
+.profile-avatar.image {
+  object-fit: cover;
+}
+
 .profile-chip-info {
   display: flex;
   flex-direction: column;

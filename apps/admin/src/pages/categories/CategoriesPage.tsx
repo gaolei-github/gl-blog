@@ -172,12 +172,13 @@ function CategoriesPage() {
     ) => {
       try {
         const normalizedKeyword = keyword.trim()
+        const nextStatus: 0 | 1 | undefined =
+          status === 'enabled' ? 1 : status === 'disabled' ? 0 : undefined
         const payload = {
           keyword: normalizedKeyword,
           pageNo,
           pageSize: size,
-          status:
-            status === 'enabled' ? 1 : status === 'disabled' ? 0 : undefined,
+          status: nextStatus,
         }
         const response = await fetchCategoryPage(payload)
 
@@ -189,18 +190,21 @@ function CategoriesPage() {
 
         const records = response.data?.records ?? []
         const responseTotal = Number(response.data?.total ?? 0)
-        const nextCategories = records.map((record) => {
+        const nextCategories: CategoryItem[] = records.map((record) => {
           const nextId = String(record.id)
           const nextParentId =
             record.parentId === 0 ? null : String(record.parentId)
           const nextLevel = String(record.level) as CategoryLevel
           const enabledValue = Number(record.enabled)
 
+          const nextStatus: CategoryItem['status'] =
+            enabledValue === 1 ? 'enabled' : 'disabled'
+
           return {
             id: nextId,
             name: record.name,
             description: record.description,
-            status: enabledValue === 1 ? 'enabled' : 'disabled',
+            status: nextStatus,
             postCount: record.postCount,
             updatedAt: record.updateTime,
             slug: record.slug || record.categoryCode || nextId,

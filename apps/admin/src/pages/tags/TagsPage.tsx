@@ -102,15 +102,17 @@ function TagsPage() {
 
         const records = response.data?.records ?? []
         const responseTotal = response.data?.total ?? 0
-        const nextTags = records.map((record) => {
+        const nextTags: TagItem[] = records.map((record) => {
           const nextId = String(record.id)
           const nextSlug = record.slug || record.tagCode || nextId
+          const nextStatus: TagItem['status'] =
+            record.enabled === 1 ? 'enabled' : 'disabled'
 
           return {
             id: nextId,
             name: record.name,
             description: record.description,
-            status: record.enabled === 1 ? 'enabled' : 'disabled',
+            status: nextStatus,
             slug: nextSlug,
           }
         })

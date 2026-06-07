@@ -4,6 +4,7 @@ import HomePage from '../pages/home/HomePage'
 import LoginPage from '../pages/login/LoginPage'
 import CreatePostPage from '../pages/posts/CreatePostPage'
 import PostsPage from '../pages/posts/PostsPage'
+import ProfilePage from '../pages/profile/ProfilePage'
 import TagsPage from '../pages/tags/TagsPage'
 import CategoriesPage from '../pages/categories/CategoriesPage'
 import { hasAuthToken } from '../utils/auth'
@@ -82,6 +83,14 @@ function AppRoutes() {
         element={
           <RequireAuth>
             <CategoriesPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/profile"
+        element={
+          <RequireAuth>
+            <ProfilePage />
           </RequireAuth>
         }
       />

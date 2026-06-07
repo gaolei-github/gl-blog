@@ -1,5 +1,6 @@
 :root {
   --doc-primary: #2563eb;
+  --doc-accent: #0f766e;
   --doc-gray-50: #fafafa;
   --doc-gray-100: #f4f4f5;
   --doc-gray-200: #e4e4e7;
@@ -16,6 +17,7 @@
   --doc-space-32: 32px;
   --doc-space-40: 40px;
   --doc-space-48: 48px;
+  --doc-bg-elevated: #f6f7fb;
   --doc-bg: #fafafa;
   --doc-surface: #ffffff;
   --doc-text: #18181b;
@@ -23,6 +25,8 @@
 }
 
 [data-theme='dark'] {
+  --doc-accent: #22c55e;
+  --doc-bg-elevated: #111827;
   --doc-bg: #18181b;
   --doc-surface: #18181b;
   --doc-text: #e4e4e7;

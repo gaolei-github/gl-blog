@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { clearAuthTokens } from '../../utils/auth'
+import {
+  PROFILE_UPDATED_EVENT,
+  readLocalProfile,
+} from '../../utils/profile'
 import './dashboard-layout.css'
 
 type DashboardLayoutProps = {
@@ -34,23 +38,19 @@ const menuItems = [
   },
 ]
 
-const profile = {
-  name: 'Guolei Gao',
-  email: 'guolei@example.com',
-}
-
 function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const menuRef = useRef<HTMLDivElement | null>(null)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
+  const [profile, setProfile] = useState(() => readLocalProfile())
 
   const activeKey = useMemo(() => {
     const activeItem = menuItems.find((item) =>
       location.pathname.startsWith(item.path)
     )
 
-    return activeItem?.key ?? 'home'
+    return activeItem?.key ?? ''
   }, [location.pathname])
 
   useEffect(() => {
@@ -72,6 +72,18 @@ function DashboardLayout({ children }: DashboardLayoutProps) {
     return () => document.removeEventListener('mousedown', handleOutsideClick)
   }, [isProfileMenuOpen])
 
+  useEffect(() => {
+    const syncProfile = () => setProfile(readLocalProfile())
+
+    window.addEventListener(PROFILE_UPDATED_EVENT, syncProfile)
+    window.addEventListener('storage', syncProfile)
+
+    return () => {
+      window.removeEventListener(PROFILE_UPDATED_EVENT, syncProfile)
+      window.removeEventListener('storage', syncProfile)
+    }
+  }, [])
+
   const handleLogout = () => {
     clearAuthTokens()
     navigate('/login', { replace: true })
@@ -81,6 +93,11 @@ function DashboardLayout({ children }: DashboardLayoutProps) {
     if (location.pathname !== path) {
       navigate(path)
     }
+  }
+
+  const handleEditProfile = () => {
+    setIsProfileMenuOpen(false)
+    handleNavigate('/profile')
   }
 
   return (
@@ -99,9 +116,17 @@ function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
           <div className="dashboard-actions">
             <div className="profile-chip" ref={menuRef}>
-              <div className="profile-avatar" aria-hidden="true">
-                {profile.name.slice(0, 1).toUpperCase()}
-              </div>
+              {profile.avatar ? (
+                <img
+                  className="profile-avatar image"
+                  src={profile.avatar}
+                  alt={profile.name}
+                />
+              ) : (
+                <div className="profile-avatar" aria-hidden="true">
+                  {profile.name.slice(0, 1).toUpperCase()}
+                </div>
+              )}
               <div className="profile-chip-info">
                 <div className="profile-chip-name">{profile.name}</div>
                 <div className="profile-chip-email">{profile.email}</div>
@@ -124,7 +149,7 @@ function DashboardLayout({ children }: DashboardLayoutProps) {
                     type="button"
                     className="profile-menu-item"
                     role="menuitem"
-                    onClick={() => setIsProfileMenuOpen(false)}
+                    onClick={handleEditProfile}
                   >
                     修改资料
                   </button>
